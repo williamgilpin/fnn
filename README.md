@@ -8,8 +8,7 @@ This package includes alternative embedding methods using lag based on the avera
 
 For more information about the technique, please see the following reference. If using this code, please consider citing the paper.
 
-	Gilpin, William. "Deep learning of dynamical attractors from time series measurements" 2020. 
-	https://arxiv.org/abs/2002.05909
+> Gilpin, William. "Deep learning of dynamical attractors from time series measurements" 2020. [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
 
 # Requirements
 
