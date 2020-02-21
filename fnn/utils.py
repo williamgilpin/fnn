@@ -117,4 +117,108 @@ def train_test(dataset, sample_size, time_window, std=1.0, split=0.5):
     
     return X_train, X_test
 
+def standardize_ts(a, scale=1.0):
+    """
+    Standardize a T x D time series along its first dimension
+    For dimensions with zero variance, divide by one instead of zero
+    """
+    stds = np.std(a, axis=0, keepdims=True)
+    stds[stds==0] = 1
+    return (a - np.mean(a, axis=0, keepdims=True))/(scale*stds)
 
+def hankel_matrix(data, p=-1, q=None):
+    """
+    Create the Hankel matrix for a univariate time series. p specifies the width 
+    of the matrix
+    """
+    if p==-1:
+        p = len(data)
+    if not q:
+        q = p
+    
+    last = data[-p:]
+    first = data[-(p+q):-p]
+    
+    h_mat = hankel(first,last)
+    
+    return h_mat
+
+def fixed_aspect_ratio(ratio):
+    '''
+    Set a fixed aspect ratio on matplotlib plots 
+    regardless of axis units
+    '''
+    xvals, yvals = plt.gca().axes.get_xlim(), plt.gca().axes.get_ylim()
+    
+    xrange = xvals[1]-xvals[0]
+    yrange = yvals[1]-yvals[0]
+    plt.gca().set_aspect(ratio*(xrange/yrange), adjustable='box')
+
+def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None, 
+    elev_azim=(39,-47), show_labels=False, **kwargs):
+    """
+    Create a three dimensional plot, with projections onto the 2D coordinate
+    planes
+    
+    x, y, z : 1D arrays of coordinates to plot
+    *args : arguments passed to the matplotlib plt.plot functions
+    color : 3-tuple, the RGB color (with each element in [0,1]) to use for the
+        three dimensional line plot
+    color_proj : 3-tuple, the RGB color (with each element in [0,1]) to use for the
+        two dimensional projection plots. Defaults to a lighter version of the 
+        plotting color
+    shadow_dist : relative distance of axes to their shadow. If a single value, 
+        then the same distance is used for all three axies. If a triple, then 
+        different values are used for all axes
+    elev_azim : 2-tupe, the starting values of elevation and azimuth when viewing
+        the figure
+    show_labels : bool, show numerical labels on the axes
+    """
+
+    if not color_proj:
+        color_proj = lighter(color, .6)
+
+
+    if np.isscalar(shadow_dist) == 1:
+        sdist_x = shadow_dist
+        sdist_y = shadow_dist
+        sdist_z = shadow_dist
+    else:
+        sdist_x, sdist_y, sdist_z = shadow_dist
+
+
+    fig = plt.figure(figsize=(7,7))
+    ax = fig.add_subplot(111, projection= '3d')
+    
+    ax.plot(x, z, *args, zdir='y', zs=sdist_y*np.max(y), color=color_proj, **kwargs)
+    ax.plot(y, z, *args, zdir='x', zs=sdist_x*np.min(x), color=color_proj, **kwargs)
+    ax.plot(x, y, *args, zdir='z', zs=sdist_z*np.min(z), color=color_proj, **kwargs)
+    ax.plot(x, y, z, *args, color=color, **kwargs)
+
+    ax.view_init(elev=elev_azim[0], azim=elev_azim[1])
+    ax.set_aspect('auto', adjustable='box') 
+    
+    ratio = 1.0
+    xvals, yvals = ax.get_xlim(), ax.get_ylim()
+    xrange = xvals[1]-xvals[0]
+    yrange = yvals[1]-yvals[0]
+    ax.set_aspect(ratio*(xrange/yrange), adjustable='box')
+
+    if not show_labels:
+        ax.set_xticklabels([])                               
+        ax.set_yticklabels([])                               
+        ax.set_zticklabels([])
+    #plt.show()
+
+    return ax
+
+def lighter(clr, f=1/3):
+    """
+    An implementation of Mathematica's Lighter[] 
+    function for RGB colors
+    clr : 3-tuple or list, an RGB color
+    f : float, the fraction by which to brighten
+    """
+    gaps = [f*(1 - val) for val in clr]
+    new_clr = [val + gap for gap, val in zip(gaps, clr)]
+    return new_clr
