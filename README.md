@@ -1,6 +1,6 @@
-## FNN 
+## fnn
 
-Embed complex time series using autoencoders and a loss function based on penalizing false-nearest-neighbors.
+Embed univariate or multivariate time series using autoencoders with a loss function that penalizes false-nearest-neighbors.
 
 This package includes alternative embedding methods using lag based on the average mutual information, Eigen-time-delay coordinates (ETD), and time-lagged independent component analysis (tICA).
 
@@ -8,9 +8,11 @@ This package includes alternative embedding methods using lag based on the avera
 
 For more information about the technique, please see the following reference. If using this code, please consider citing the paper.
 
-> Gilpin, William. "Deep learning of dynamical attractors from time series measurements" 2020. [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
+> Gilpin, William. "Learning strange attractors from time series" 2020. [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
 
-# Requirements
+# Installation
+
+This library requires the following packages
 
 + Numpy
 + Scipy
@@ -18,6 +20,15 @@ For more information about the technique, please see the following reference. If
 + Scikit-learn
 + Matplotlib (for demos)
 + Jupyter Notebook (for demos)
+
+To use this repository, directly download the source:
+
+	git clone https://github.com/williamgilpin/fnn
+
+Test that everything is working:
+
+	python tests/test_models.py 
+
 
 # Usage
 
@@ -34,5 +45,5 @@ The folder `datasets` contains abridged versions of several time series datasets
 + `ecg_train.pkl` and `ecg_test.pkl` correspond to ECG measurements for two different patients, taken from the [PhysioNet QT database](https://physionet.org/content/qtdb/1.0.0/)
 + `mouse.pkl` A time series of spiking rates for a neuron in a mouse thalamus. Raw spike data was obtained from [CRCNS](http://crcns.org/data-sets/thalamus/th-1/about-th-1) and processed with the authors' code in order to generate a spike rate time series.
 
-Some functions used for baselines in this repository have been adapted from code other repositories. We have included these files here directly, in order to reduce dependencies. However, if using this code in future work, please heed licenses and attribute those libraries if using these components:
+Some functions used for baselines in this repository have been adapted from code in other repositories. We have included these files here directly, in order to reduce dependencies. However, if using these portions of this code in future work, please heed their licenses and attribution requirements:
 + The file `tica.py` is a standalone version of the tICA implementation in [MSMBuilder](https://github.com/msmbuilder/msmbuilder)
