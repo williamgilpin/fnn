@@ -4,8 +4,8 @@ TensorFlow functions to support the false nearest neighbor regularizer
 import tensorflow as tf
 
 def train_autoencoder(X_train, network_type='lstm',
-                      time_window=10, num_hidden=10, n_features=1, 
-                      lambda_latent=0.0, learning_rate=1e-3, batch_size=100, train_time=200,
+                      time_window=10, num_hidden=10, n_features=1, network_shape=None,
+                      lambda_latent=0.0, lambda_ortho=0.0, learning_rate=1e-3, batch_size=100, train_time=200,
                       verbose=0, random_seed=0, return_history=False):
     """
     This is a helper function that captures some of the boilerplate code for constructing
@@ -15,14 +15,18 @@ def train_autoencoder(X_train, network_type='lstm',
     ----------
     - network_type : 'lstm' or 'mlp'
         Whether to use an LSTM or a feedforward network (equiv. to a time-delay neural network)
-    - n_feature : int
-        Rhe dimensionality of a point in the time series
+    - n_features : int
+        The dimensionality of a point in the time series
+    - network_shape : int or list
+        The width of hidden layers
     - time_window : int
         The number of past timesteps to use for embedding
     - num_hidden : int
         The number of latent variables
     - lambda_latent : float
         The relative weight of the false-neighbors loss during training
+    - lambda_ortho : float
+        The relative weight of the orthogonality penalty during training
     - learning_rate : float
         The learning rate to use for training
     - batch_size : int
@@ -39,12 +43,23 @@ def train_autoencoder(X_train, network_type='lstm',
     
     tf.random.set_seed(random_seed)
     
-    if network_type=='lstm':
+    if not network_shape:
+        network_shape = int(time_window)
+    if type(network_shape) is not list:
+        if network_type == 'lstm':
+            network_shape = [network_shape]
+        elif network_type == 'mlp':
+            network_shape = [network_shape, network_shape]
+        else:
+            pass
+    if network_type == 'lstm':
         enc, dec = enc_dec_lstm(time_window, n_features, num_hidden, 
+                                hidden = network_shape,
                                 rnn_opts={'activation': None, 
                                           'batch_size': batch_size})
-    elif network_type=='mlp':
+    elif network_type == 'mlp':
             enc, dec = enc_dec_tdnn(time_window, n_features, num_hidden, 
+                                    hidden = network_shape,
                             rnn_opts={'activation': None, 
                                       'batch_size': batch_size})
     else:
@@ -54,15 +69,22 @@ def train_autoencoder(X_train, network_type='lstm',
     code = enc(inp)
     reconstruction = dec(code)
     autoencoder = tf.keras.models.Model(inputs=inp, outputs=reconstruction)
-    input_example = tf.cast(tf.convert_to_tensor(X_train[:batch_size]), tf.float32)
-    reconstructed_example = autoencoder(input_example)
-
-    autoencoder.compile(optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
-                        loss=loss_latent(code,batch_size, 
-                                     lam_latent=lambda_latent),
-                        metrics=[mse_loss],
-                        experimental_run_tf_function=False)
-
+    #input_example = tf.cast(tf.convert_to_tensor(X_train[:batch_size]), tf.float32)
+    #reconstructed_example = autoencoder(input_example)
+    
+    if lambda_latent == 0 and lambda_ortho == 0:
+        loss_term = "mse"
+    elif lambda_latent == 0 and lambda_ortho > 0:
+        loss_term = loss_ortho(code, lam=lambda_ortho)
+    else:
+        loss_term = loss_latent(code, batch_size, lam=lambda_latent)
+        
+    autoencoder.compile(
+        optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
+        loss=loss_term,
+        metrics=[mse_loss],
+        experimental_run_tf_function=False
+    )    
 
     train_history = autoencoder.fit(x=tf.convert_to_tensor(X_train), 
                                     y=tf.convert_to_tensor(X_train),
@@ -131,15 +153,11 @@ def enc_dec_tdnn(time_window, n_features, n_latent, hidden=None, rnn_opts=dict()
     enc = tf.keras.Sequential()
     enc.add(tf.keras.layers.Flatten())
     enc.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(time_window,))) # smooths the output
-
-    enc.add(tf.keras.layers.Dense(hidden[0], **rnn_opts))
-    enc.add(tf.keras.layers.BatchNormalization())
-    enc.add(tf.keras.layers.Activation(activation_func))
     
-    enc.add(tf.keras.layers.Dense(hidden[1], **rnn_opts))
-    enc.add(tf.keras.layers.BatchNormalization())
-    enc.add(tf.keras.layers.Activation(activation_func))
-    
+    for hidden_unit in hidden:
+        enc.add(tf.keras.layers.Dense(hidden_unit, **rnn_opts))
+        enc.add(tf.keras.layers.BatchNormalization())
+        enc.add(tf.keras.layers.Activation(activation_func))
     
     enc.add(tf.keras.layers.Dense(n_latent, input_shape=(time_window,), **rnn_opts))
     enc.add(tf.keras.layers.BatchNormalization())
@@ -153,13 +171,10 @@ def enc_dec_tdnn(time_window, n_features, n_latent, hidden=None, rnn_opts=dict()
     dec.add(tf.keras.layers.Flatten())
     dec.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
     
-    dec.add(tf.keras.layers.Dense(hidden[1], input_shape=(n_latent,), **rnn_opts))
-    dec.add(tf.keras.layers.BatchNormalization())
-    dec.add(tf.keras.layers.Activation(activation_func))
-    
-    dec.add(tf.keras.layers.Dense(hidden[0], **rnn_opts))
-    dec.add(tf.keras.layers.BatchNormalization())
-    dec.add(tf.keras.layers.Activation(activation_func))
+    for hidden_unit in hidden[::-1]:
+        dec.add(tf.keras.layers.Dense(hidden_unit,  **rnn_opts))
+        dec.add(tf.keras.layers.BatchNormalization())
+        dec.add(tf.keras.layers.Activation(activation_func))
     
     
     dec.add(tf.keras.layers.Dense(time_window*n_features, **rnn_opts))
@@ -222,7 +237,7 @@ def enc_dec_rnn(time_window, n_features, n_latent, hidden=None, rnn_opts=dict(),
 #
 ###------------------------------------###
 
-def loss_latent(latent, batch_size, lam_latent=1.0):
+def loss_latent(latent, batch_size, lam=1.0):
     """
     Build a custom loss function that keras.compile will accept.
     
@@ -232,7 +247,7 @@ def loss_latent(latent, batch_size, lam_latent=1.0):
         A batch of latent activations
     - batch_size : int
         The expected batch size
-    - lam_latent : float
+    - lam : float
         The relative weight of the fnn regularizer. Expressed relative to the
         standard autoencoder reconstruction loss, which has constant weight 1.0
         
@@ -245,10 +260,40 @@ def loss_latent(latent, batch_size, lam_latent=1.0):
     def loss(y_true, y_pred):
         """Loss function generated automatically by loss_latent()"""
         total_loss = tf.reduce_mean(tf.keras.losses.mean_squared_error(y_pred, y_true), axis=1)
-        total_loss += lam_latent*loss_false(latent, batch_size=batch_size)
+        total_loss += lam*loss_false(latent, batch_size=batch_size)
         return total_loss
 
     return loss
+
+def loss_ortho(latent, lam=1.0):
+    """
+    Build a custom loss function that keras.compile will accept.
+    
+    Parameters
+    ----------
+    - latent : B x T x L)
+        A batch of latent activations
+    - batch_size : int
+        The expected batch size
+    - lam_latent : float
+        The relative weight of the regularizer. Expressed relative to the
+        standard autoencoder reconstruction loss, which has constant weight 1.0    
+   
+   Returns
+    -------
+    - loss : function
+        A keras-friendly loss function that takes two batches of labels as arguments
+    """
+    @tf.function
+    def loss(y_true, y_pred):
+        ## first term has shape (batch, lookback), do we really want to flatten it to just be (batch,)?
+        ## can avoid by increasing dimensionality of last term. the grad wrt 
+        total_loss = tf.reduce_mean(tf.keras.losses.mean_squared_error(y_pred, y_true), axis=1)
+        total_loss += lam*loss_cov(latent)
+        return total_loss
+
+    return loss
+
 
 @tf.function
 def loss_false(code_batch, batch_size=1, k=None):
@@ -338,4 +383,30 @@ def mse_loss(y_true, y_pred):
     """
     return tf.reduce_mean(tf.keras.losses.mean_squared_error(y_pred, y_true), axis=1)
 
+@tf.function
+def loss_cov(a, whiten=True):
+    """
+    The covariance loss, used to orthogonalize activations. Flattens the batch
+    in order to compute elements of covariance matrix
+    
+    Parameters
+    - a : B x N 
+        Layer activations across a batch of size B
+    - whiten : bool
+        Whether to standardize the batch feature-wise
+        
+    Reference: Cogswell et al. ICLR 2016
+    """
+    a_mean = tf.reduce_mean(a, axis=0)
+    n_batch = tf.cast(len(a), tf.float32)
 
+    aw = (a - a_mean)
+    if whiten:
+        a_std = tf.math.reduce_std(a, axis=0)
+        aw /= a_std
+
+    cov = (1/n_batch)*tf.matmul(tf.transpose(aw), aw)
+
+    loss = 0.5*(tf.square(tf.norm(cov)) - tf.square(tf.norm(tf.linalg.diag_part(cov))))
+    
+    return loss

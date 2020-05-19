@@ -41,7 +41,7 @@ def train_tica(X, num_hidden=10, time_lag=10, random_seed=None):
     embed_func = lambda y : tica.transform([np.reshape(y, (y.shape[0], -1))])[0]
     return embed_func
 
-def train_etd(X, num_hidden=10, random_seed=0):
+def train_etd(X, num_hidden=10, random_seed=0, sparse=False, kernel=False):
     """
     Instantiate and fits eigen-time-delay, or Broomhead-King coordinates, and 
     return a function that embeds additional datasets.
@@ -89,16 +89,31 @@ def train_ica(X, num_hidden=10, random_seed=0):
 
 def hankel_matrix(data, p=-1, q=None):
     """
-    Find the Hankel matrix dimensionwise for a multidimensional 
+    Find the Hankel matrix dimensionwise for multiple multidimensional 
     time series
     
     Arguments
-    data : [T, 1] or [T, D]
-    q : int, the width of the matrix
-    p : int, the height of the matrix
+    data : [N, T, 1] or [N, T, D] ndarray
+        A collection of N time series of length T and dimensionality D
+    q : int
+        The width of the matrix
+    p : int
+        The height of the matrix
     
     """
     
+    if len(data.shape) == 3:
+        return np.stack([_hankel_matrix(item, p, q) for item in data])
+    
+    if len(data.shape) == 1:
+        data = data[:, None]
+    return _hankel_matrix(data, p, q)  
+    
+
+def _hankel_matrix(data, p=-1, q=None):
+    """
+    Calculate the hankel matrix of a multivariate timeseries
+    """
     if len(data.shape) == 1:
         data = data[:, None]
     
@@ -107,7 +122,6 @@ def hankel_matrix(data, p=-1, q=None):
         p = len(data)
     if not q:
         q = p
-    
     all_hmats = list()
     for row in data.T:
 
@@ -224,7 +238,15 @@ def fixed_aspect_ratio(ratio):
     xrange = xvals[1]-xvals[0]
     yrange = yvals[1]-yvals[0]
     plt.gca().set_aspect(ratio*(xrange/yrange), adjustable='box')
-
+    
+# def fixed_aspect_ratio_3d(ratio=1.0):
+#     ratio = 1.0
+#     xvals, yvals = plt.gca().get_xlim(), plt.gca().get_ylim()
+#     xrange = xvals[1]-xvals[0]
+#     yrange = yvals[1]-yvals[0]
+#     plt.gca().set_aspect(ratio*(xrange/yrange), adjustable='box')
+    
+    
 def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None, 
     elev_azim=(39,-47), show_labels=False, **kwargs):
     """
@@ -274,11 +296,12 @@ def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None,
     ax.view_init(elev=elev_azim[0], azim=elev_azim[1])
     ax.set_aspect('auto', adjustable='box') 
     
-    ratio = 1.0
-    xvals, yvals = ax.get_xlim(), ax.get_ylim()
-    xrange = xvals[1]-xvals[0]
-    yrange = yvals[1]-yvals[0]
-    ax.set_aspect(ratio*(xrange/yrange), adjustable='box')
+#     ratio = 1.0
+#     xvals, yvals = ax.get_xlim(), ax.get_ylim()
+#     xrange = xvals[1]-xvals[0]
+#     yrange = yvals[1]-yvals[0]
+#     ax.set_aspect(ratio*(xrange/yrange), adjustable='box')
+    fixed_aspect_ratio(1.0)
 
     if not show_labels:
         ax.set_xticklabels([])                               
