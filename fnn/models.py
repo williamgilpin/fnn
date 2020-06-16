@@ -73,15 +73,20 @@ def train_autoencoder(X_train, network_type='lstm',
     #reconstructed_example = autoencoder(input_example)
     
     if lambda_latent == 0 and lambda_ortho == 0:
-        loss_term = "mse"
+        #loss_term = "mse"
+        autoencoder.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(reconstruction, inp), axis=1))
     elif lambda_latent == 0 and lambda_ortho > 0:
-        loss_term = loss_ortho(code, lam=lambda_ortho)
+        #loss_term = loss_ortho(code, lam=lambda_ortho)
+        autoencoder.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(reconstruction, inp), axis=1) 
+                     + lambda_ortho*loss_cov(code))
     else:
-        loss_term = loss_latent(code, batch_size, lam=lambda_latent)
+        #loss_term = loss_latent(code, batch_size, lam=lambda_latent)
+        autoencoder.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(reconstruction, inp), axis=1) 
+                     + lambda_latent*loss_false(code, batch_size=batch_size))
         
     autoencoder.compile(
         optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
-        loss=loss_term,
+        #loss=loss_term,
         metrics=[mse_loss],
         experimental_run_tf_function=False
     )    
@@ -240,6 +245,7 @@ def enc_dec_rnn(time_window, n_features, n_latent, hidden=None, rnn_opts=dict(),
 def loss_latent(latent, batch_size, lam=1.0):
     """
     Build a custom loss function that keras.compile will accept.
+    Deprecated when TF2.2+ support was added
     
     Parameters
     ----------
@@ -268,6 +274,7 @@ def loss_latent(latent, batch_size, lam=1.0):
 def loss_ortho(latent, lam=1.0):
     """
     Build a custom loss function that keras.compile will accept.
+    Deprecated when TF2.2+ support was added
     
     Parameters
     ----------
@@ -283,6 +290,7 @@ def loss_ortho(latent, lam=1.0):
     -------
     - loss : function
         A keras-friendly loss function that takes two batches of labels as arguments
+        
     """
     @tf.function
     def loss(y_true, y_pred):
@@ -295,7 +303,8 @@ def loss_ortho(latent, lam=1.0):
     return loss
 
 
-@tf.function
+#@tf.function
+# @tf.autograph.experimental.do_not_convert
 def loss_false(code_batch, batch_size=1, k=None):
     """
     An activity regularizer based on the False-Nearest-Neighbor
@@ -310,8 +319,8 @@ def loss_false(code_batch, batch_size=1, k=None):
         due to a bug on keras' end
     - k : int 
         DEPRECATED. The number of nearest neighbors to use to compute 
-        neighborhoods. Right now this is set to a constant, since it doesn't 
-        really affect the embedding
+        neighborhoods. Right now this is set to a constant, since it 
+        doesn't affect the embedding
 
     Development
     -----------
@@ -383,7 +392,7 @@ def mse_loss(y_true, y_pred):
     """
     return tf.reduce_mean(tf.keras.losses.mean_squared_error(y_pred, y_true), axis=1)
 
-@tf.function
+#@tf.function
 def loss_cov(a, whiten=True):
     """
     The covariance loss, used to orthogonalize activations. Flattens the batch
