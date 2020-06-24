@@ -8,7 +8,7 @@ This package includes alternative embedding methods using lag based on the avera
 
 For more information about the technique, please see the following reference. If using this code, please consider citing the paper.
 
-> Gilpin, William. "Learning strange attractors from time series" 2020. [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
+> William Gilpin. "Deep reconstruction of strange attractors from time series" 2020. [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
 
 # Installation
 
@@ -36,7 +36,15 @@ Test that everything is working:
 + `compare.ipynb` trains an LSTM and MLP with the FNN regularizer, as well as comparison models with tICA and ETD.
 + `exploratory.ipynb` applies the embedding technique to several time series datasets with unknown attractors.
 
-# Dataset sources
+
+# Sources and related work
+
+A great summary of the work in this repository, and the broader topic, has been written by Sigrid Keydana [on the RStudio blog](https://blogs.rstudio.com/ai/posts/2020-06-24-deep-attractors/). The post includes an R implementation of the fnn regularizer.
+
+Some functions used for baselines in this repository have been adapted from code in other repositories. We have included these files here directly, in order to reduce dependencies. However, if using these portions of this code in future work, please heed their licenses and attribution requirements:
++ The file `tica.py` is a standalone version of the tICA implementation in [MSMBuilder](https://github.com/msmbuilder/msmbuilder)
+
+# Datasets
 
 The folder `datasets` contains abridged versions of several time series datasets used for testing and evaluating the code. We summarize these files, and provide their original sources, here:
 + `geyser_train_test.pkl` corresponds to detrended temperature readings from the main runoff pool of the Old Faithful geyser in Yellowstone National Park, downloaded from the [GeyserTimes database](https://geysertimes.org/).  Temperature measurements start on April 13, 2015 and occur in one-minute increments. 
@@ -44,6 +52,3 @@ The folder `datasets` contains abridged versions of several time series datasets
 + `pendulum_train.pkl` and `pendulum_test.pkl` correspond to two different double pendulum experiments, taken from a series of experiments by [Asseman et al.](https://developer.ibm.com/exchanges/data/all/double-pendulum-chaotic/). In Asseman et al.'s original study, pendula were filmed, and the $(x,y)$ positions of centroids were detected. Here, we have converted the dataset into canonical Hamiltonian coordinates $(\theta_1, \theta_2, \dot\theta_1, \dot\theta_2)$.
 + `ecg_train.pkl` and `ecg_test.pkl` correspond to ECG measurements for two different patients, taken from the [PhysioNet QT database](https://physionet.org/content/qtdb/1.0.0/)
 + `mouse.pkl` A time series of spiking rates for a neuron in a mouse thalamus. Raw spike data was obtained from [CRCNS](http://crcns.org/data-sets/thalamus/th-1/about-th-1) and processed with the authors' code in order to generate a spike rate time series.
-
-Some functions used for baselines in this repository have been adapted from code in other repositories. We have included these files here directly, in order to reduce dependencies. However, if using these portions of this code in future work, please heed their licenses and attribution requirements:
-+ The file `tica.py` is a standalone version of the tICA implementation in [MSMBuilder](https://github.com/msmbuilder/msmbuilder)
