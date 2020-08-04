@@ -7,77 +7,7 @@ from scipy.signal import periodogram, argrelextrema, savgol_filter
 from scipy.spatial.distance import pdist, squareform, directed_hausdorff
 from scipy.spatial import procrustes
 
-from sklearn.decomposition import TruncatedSVD, FastICA, PCA
-
 import matplotlib.pyplot as plt
-
-from tica import tICA
-
-###------------------------------------###
-#
-#
-#       Alternate embedding techniques
-#
-#
-###------------------------------------###
-
-def train_tica(X, num_hidden=10, time_lag=10, random_seed=None):
-    """
-    Instantiate and fit a tICA model, and return a function that embeds
-    additional datasets
-    
-    Inputs:
-    - X : ndarray with shape (n_timepoints, t_lag, n_features)
-    - num_hidden : int, the number of embedding coordinates
-    - time_lag : int, the time lag to use to construct the embedding
-    - random_seed : ignored
-    
-    Returns:
-    - embed_func : a function that takes additional coordinates and embeds them
-    """
-    
-    tica = tICA(n_components = num_hidden, lag_time=time_lag)
-    tica.fit([np.reshape(X, (X.shape[0], -1))])
-    embed_func = lambda y : tica.transform([np.reshape(y, (y.shape[0], -1))])[0]
-    return embed_func
-
-def train_etd(X, num_hidden=10, random_seed=0, sparse=False, kernel=False):
-    """
-    Instantiate and fits eigen-time-delay, or Broomhead-King coordinates, and 
-    return a function that embeds additional datasets.
-    
-    Inputs:
-    - X : ndarray with shape (n_timepoints, t_lag, n_features)
-    - num_hidden : int, the number of embedding coordinates
-    - random_seed : int, the seed for the random number generator
-    
-    Returns:
-    - embed_func : a function that takes additional coordinates and embeds them
-    """
-    #svd = TruncatedSVD(n_components=num_hidden, n_iter=7, random_state=random_seed);
-    svd = PCA(n_components=num_hidden);
-    svd.fit(np.reshape(X, (X.shape[0], -1)));
-    embed_func = lambda y : svd.transform(np.reshape(y, (y.shape[0], -1)))
-    return embed_func
-
-def train_ica(X, num_hidden=10, random_seed=0):
-    """
-    Instantiate and fit an ICA model and return a function that embeds 
-    additional datasets.
-    
-    Inputs:
-    - X : ndarray with shape (n_timepoints, t_lag, n_features)
-    - num_hidden : int, the number of embedding coordinates
-    - random_seed : int, the seed for the random number generator
-    
-    Returns:
-    - embed_func : a function that takes additional coordinates and embeds them
-    """
-    #svd = TruncatedSVD(n_components=num_hidden, n_iter=7, random_state=random_seed);
-    ica = FastICA(n_components=num_hidden, random_state=random_seed);
-    ica.fit(np.reshape(X, (X.shape[0], -1)));
-    embed_func = lambda y : ica.transform(np.reshape(y, (y.shape[0], -1)))
-    return embed_func
 
 ###------------------------------------###
 #
@@ -238,14 +168,6 @@ def fixed_aspect_ratio(ratio):
     xrange = xvals[1]-xvals[0]
     yrange = yvals[1]-yvals[0]
     plt.gca().set_aspect(ratio*(xrange/yrange), adjustable='box')
-    
-# def fixed_aspect_ratio_3d(ratio=1.0):
-#     ratio = 1.0
-#     xvals, yvals = plt.gca().get_xlim(), plt.gca().get_ylim()
-#     xrange = xvals[1]-xvals[0]
-#     yrange = yvals[1]-yvals[0]
-#     plt.gca().set_aspect(ratio*(xrange/yrange), adjustable='box')
-    
     
 def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None, 
     elev_azim=(39,-47), show_labels=False, **kwargs):
