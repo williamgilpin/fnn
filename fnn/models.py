@@ -76,6 +76,7 @@ class CausalAutoencoder(tf.keras.Model):
         rnn_opts=dict(),
         activation_func=tf.keras.layers.ELU(alpha=1.0),
         random_state=None,
+        **kwargs
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -152,6 +153,7 @@ class MLPAutoencoder(tf.keras.Model):
         rnn_opts=dict(),
         activation_func=tf.keras.layers.ELU(alpha=1.0),
         random_state=None,
+        **kwargs
     ):
         super(MLPAutoencoder, self).__init__()
         self.n_latent = n_latent
@@ -272,6 +274,7 @@ class LSTMAutoencoder(tf.keras.Model):
         rnn_opts=dict(),
         activation_func=tf.keras.layers.ELU(alpha=1.0),
         random_state=None,
+        **kwargs
     ):
         super(LSTMAutoencoder, self).__init__()
         self.n_latent = n_latent
@@ -373,6 +376,7 @@ class LSTMAutoencoderLegacy(tf.keras.Model):
         rnn_opts=dict(),
         activation_func=tf.keras.layers.ELU(alpha=1.0),
         random_state=None,
+        **kwargs
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -385,11 +389,7 @@ class LSTMAutoencoderLegacy(tf.keras.Model):
         # Encoder
         self.encoder = tf.keras.Sequential()
         self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        
-        
-        
         self.encoder.add(tf.keras.layers.GaussianNoise(0.5))  # smooths the output
-
         self.encoder.add(
             tf.keras.layers.LSTM(
                 self.n_latent,
@@ -444,11 +444,13 @@ class TimeSeriesEmbedding:
         n_latent,
         time_window=10, 
         n_features=1, 
+        random_state=None,
         **kwargs
     ):
         self.n_latent = n_latent
         self.time_window = time_window
         self.n_features = n_features
+        self.random_state = random_state
     
     def fit(self, X, y=None):
         raise AttributeError("Derived class does not contain method.")
@@ -499,11 +501,21 @@ class ETDEmbedding(TimeSeriesEmbedding):
     ):
         super().__init__(*args, **kwargs)
         if kernel:
-            self.model = KernelPCA(n_components = self.n_latent, kernel=kernel)
+            self.model = KernelPCA(
+                n_components = self.n_latent, 
+                kernel=kernel,
+                random_state = self.random_state
+                )
         elif sparse:
-            self.model = SparsePCA(n_components = self.n_latent)
+            self.model = SparsePCA(
+                n_components = self.n_latent,
+                random_state = self.random_state
+                )
         else:
-            self.model = PCA(n_components = self.n_latent)
+            self.model = PCA(
+                n_components = self.n_latent, 
+                random_state = self.random_state
+                )
                 
     
     def fit(self, X, y=None):
@@ -525,13 +537,13 @@ class ETDEmbedding(TimeSeriesEmbedding):
         """        
         # Make hankel matrix from dataset
         Xs = standardize_ts(X)
-        X_train = hankel_matrix(Xs, len(Xs) - self.time_window, q=self.time_window)
+        X_train = hankel_matrix(Xs, self.time_window)
         self.model.fit(np.reshape(X_train, (X_train.shape[0], -1)))
         
     def transform(self, X, y=None):
-        X_test = hankel_matrix(standardize_ts(X), len(X) - self.time_window, q = self.time_window)
+        X_test = hankel_matrix(standardize_ts(X), self.time_window)
         X_test = np.reshape(X_test, (X_test.shape[0], -1))
-        X_new = self.model.transform(X_test)[self.time_window:]
+        X_new = self.model.transform(X_test)
         return X_new
 
     
@@ -660,10 +672,6 @@ class AMIEmbedding(ConstantLagEmbedding):
         
         self.lag_time = lag_time # overrides constant
         
-        
-
-    
-
 
 class TICAEmbedding(TimeSeriesEmbedding):
     """Embed time series using tICA
@@ -685,7 +693,10 @@ class TICAEmbedding(TimeSeriesEmbedding):
         if time_lag > 0:
             self.model = tICA(n_components = self.n_latent, lag_time = time_lag)
         elif time_lag == 0:
-            self.model = FastICA(n_components = self.n_latent)
+            self.model = FastICA(
+                n_components = self.n_latent,
+                random_state = self.random_state
+                )
         else:
             raise ValueError("Time delay parameter must be greater than or equal to zero.")
     
@@ -708,7 +719,7 @@ class TICAEmbedding(TimeSeriesEmbedding):
         """        
         # Make hankel matrix from dataset
         Xs = standardize_ts(X)
-        X_train = hankel_matrix(Xs, len(Xs) - self.time_window, q=self.time_window)
+        X_train = hankel_matrix(Xs, self.time_window)
         if self.time_lag > 0:
             self.model.fit([np.reshape(X_train, (X_train.shape[0], -1))])
         else:
@@ -718,24 +729,21 @@ class TICAEmbedding(TimeSeriesEmbedding):
         X_test = hankel_matrix(standardize_ts(X), len(X) - self.time_window, q = self.time_window)
         X_test = np.reshape(X_test, (X_test.shape[0], -1))
         if self.time_lag > 0:
-            X_new = self.model.transform([X_test])[0][self.time_window:]
+            X_new = self.model.transform([X_test])[0]
         else:
-            X_new = self.model.transform(X_test)[self.time_window:]
+            X_new = self.model.transform(X_test)
         return X_new
        
 
-class LSTMEmbedding(TimeSeriesEmbedding):
-    """An LSTM model for embedding time series
+    
+class NeuralNetworkEmbedding(TimeSeriesEmbedding):
+    """Base class autoencoder model for time series embedding
     
     Properties
     ----------
     
     n_latent : int
         The embedding dimension
-        
-    time_window : int
-        The number of past timesteps to use to embed each
-        point
         
     n_features : int
         The number of channels in the time series
@@ -745,6 +753,78 @@ class LSTMEmbedding(TimeSeriesEmbedding):
         
     """
     
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+    
+    def fit(
+        self, 
+        X,
+        y=None,
+        learning_rate=1e-3, 
+        batch_size=100, 
+        train_steps=200,
+        loss='mse',
+        verbose=0
+    ):
+        """Fit the model with a time series X
+
+        Parameters
+        ----------
+        X : array-like, shape (n_timepoints, n_features)
+            Training data, where n_samples is the number of samples
+            and n_features is the number of features.
+
+        y : None
+            Ignored variable.
+
+        Returns
+        -------
+        X_new : array-like, shape (n_timepoints, n_components)
+            Transformed values.
+        """
+        # Make hankel matrix from dataset
+        Xs = standardize_ts(X)
+        X_train = hankel_matrix(Xs, self.time_window)
+
+        tf.random.set_seed(self.random_state)
+        np.random.seed(self.random_state)
+        self.model.compile(
+            optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
+            loss=loss,
+            #experimental_run_tf_function=False
+        )    
+        
+        self.train_history = self.model.fit(
+            x=tf.convert_to_tensor(X_train),                         
+            y=tf.convert_to_tensor(X_train),
+            epochs=train_steps,
+            batch_size=batch_size,
+            verbose=verbose
+        )
+             
+    def transform(self, X, y=None):
+        X_test = hankel_matrix(standardize_ts(X), self.time_window)
+        X_new = self.model.encoder.predict(X_test)
+        return X_new      
+
+
+class MLPEmbedding(NeuralNetworkEmbedding):
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.model = MLPAutoencoder(
+            self.n_latent,
+            **kwargs
+        )
+
+class LSTMEmbedding(NeuralNetworkEmbedding):
     def __init__(
         self,
         *args,
@@ -763,157 +843,9 @@ class LSTMEmbedding(TimeSeriesEmbedding):
                 self.n_latent,
                 **kwargs
             )
-    
-    def fit(
-        self, 
-        X,
-        y=None,
-        loss="mse",
-        learning_rate=1e-3, 
-        batch_size=100, 
-        train_steps=200,
-        verbose=0
-    ):
-        """Fit the model with a time series X
 
-        Parameters
-        ----------
-        X : array-like, shape (n_timepoints, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
 
-        y : None
-            Ignored variable.
-
-        Returns
-        -------
-        X_new : array-like, shape (n_timepoints, n_components)
-            Transformed values.
-        """
-        # Make hankel matrix from dataset
-        Xs = standardize_ts(X)
-        X_train = hankel_matrix(Xs, len(Xs) - self.time_window, q=self.time_window)
-
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
-            loss=loss,
-            #experimental_run_tf_function=False
-        )    
-        
-        self.train_history = self.model.fit(
-            x=tf.convert_to_tensor(X_train),                         
-            y=tf.convert_to_tensor(X_train),
-            epochs=train_steps,
-            batch_size=batch_size,
-            verbose=verbose
-        )
-             
-    def transform(self, X, y=None):
-        X_test = hankel_matrix(standardize_ts(X), len(X) - self.time_window, q = self.time_window)
-        X_new = self.model.encoder.predict(X_test)[self.time_window:]
-        return X_new      
-
-class MLPEmbedding(TimeSeriesEmbedding):
-    """An MLP model for embedding a time series
-    
-    Properties
-    ----------
-    
-    train_history : dict
-        The training history of the model
-    
-    model : "lstm" | "mlp" | "tica" | "etd" | "delay"
-        The type of model to use for the embedding.
-        
-    n_latent : int
-        The embedding dimension
-        
-    n_features : int
-        The number of channels in the time series
-    
-    **kwargs : dict
-        Keyword arguments passed to the model
-        
-    """
-    
-    def __init__(
-        self,
-        *args,
-        **kwargs
-    ):
-        super().__init__(*args, **kwargs)
-        self.model = MLPAutoencoder(
-            self.n_latent,
-            **kwargs
-        )
-    
-    def fit(
-        self, 
-        X,
-        y=None,
-        loss="mse",
-        learning_rate=1e-3, 
-        batch_size=100, 
-        train_steps=200,
-        verbose=0
-    ):
-        """Fit the model with a time series X
-
-        Parameters
-        ----------
-        X : array-like, shape (n_timepoints, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-
-        y : None
-            Ignored variable.
-
-        Returns
-        -------
-        X_new : array-like, shape (n_timepoints, n_components)
-            Transformed values.
-        """
-        # Make hankel matrix from dataset
-        Xs = standardize_ts(X)
-        X_train = hankel_matrix(Xs, len(Xs) - self.time_window, q=self.time_window)
-
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
-            loss=loss,
-            #experimental_run_tf_function=False
-        )    
-        
-        self.train_history = self.model.fit(
-            x=tf.convert_to_tensor(X_train),                         
-            y=tf.convert_to_tensor(X_train),
-            epochs=train_steps,
-            batch_size=batch_size,
-            verbose=verbose
-        )
-             
-    def transform(self, X, y=None):
-        X_test = hankel_matrix(standardize_ts(X), len(X) - self.time_window, q = self.time_window)
-        X_new = self.model.encoder.predict(X_test)[self.time_window:]
-        return X_new      
-    
-    
-class CausalEmbedding(TimeSeriesEmbedding):
-    """A Causal model for embedding a time series
-    
-    Properties
-    ----------
-    
-    n_latent : int
-        The embedding dimension
-        
-    n_features : int
-        The number of channels in the time series
-    
-    **kwargs : dict
-        Keyword arguments passed to the model
-        
-    """
-    
+class CausalEmbedding(NeuralNetworkEmbedding):
     def __init__(
         self,
         *args,
@@ -924,55 +856,6 @@ class CausalEmbedding(TimeSeriesEmbedding):
             self.n_latent,
             **kwargs
         )
-    
-    def fit(
-        self, 
-        X,
-        y=None,
-        learning_rate=1e-3, 
-        batch_size=100, 
-        train_steps=200,
-        verbose=0
-    ):
-        """Fit the model with a time series X
-
-        Parameters
-        ----------
-        X : array-like, shape (n_timepoints, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-
-        y : None
-            Ignored variable.
-
-        Returns
-        -------
-        X_new : array-like, shape (n_timepoints, n_components)
-            Transformed values.
-        """
-        # Make hankel matrix from dataset
-        Xs = standardize_ts(X)
-        X_train = hankel_matrix(Xs, len(Xs) - self.time_window, q=self.time_window)
-
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
-            loss="mse",
-            #experimental_run_tf_function=False
-        )    
-        
-        self.train_history = self.model.fit(
-            x=tf.convert_to_tensor(X_train),                         
-            y=tf.convert_to_tensor(X_train),
-            epochs=train_steps,
-            batch_size=batch_size,
-            verbose=verbose
-        )
-             
-    def transform(self, X, y=None):
-        X_test = hankel_matrix(standardize_ts(X), len(X) - self.time_window, q = self.time_window)
-        X_new = self.model.encoder.predict(X_test)[self.time_window:]
-        return X_new      
-    
 
 
 ###------------------------------------###

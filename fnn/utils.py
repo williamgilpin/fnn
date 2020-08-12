@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 #
 ###------------------------------------###
 
-def hankel_matrix(data, p=-1, q=None):
+def hankel_matrix(data, q, p=None):
     """
     Find the Hankel matrix dimensionwise for multiple multidimensional 
     time series
@@ -26,52 +26,40 @@ def hankel_matrix(data, p=-1, q=None):
     data : [N, T, 1] or [N, T, D] ndarray
         A collection of N time series of length T and dimensionality D
     q : int
-        The width of the matrix
+        The width of the matrix (the number of features)
     p : int
-        The height of the matrix
+        The height of the matrix (the number of samples)
     
     """
     
     if len(data.shape) == 3:
-        return np.stack([_hankel_matrix(item, p, q) for item in data])
+        return np.stack([_hankel_matrix(item, q, p) for item in data])
     
     if len(data.shape) == 1:
         data = data[:, None]
-    return _hankel_matrix(data, p, q)  
+    return _hankel_matrix(data, q, p)  
     
 
-def _hankel_matrix(data, p=-1, q=None):
+def _hankel_matrix(data, q, p=None):
     """
     Calculate the hankel matrix of a multivariate timeseries
+    
+    data : array
+        T x D multidimensional time series
     """
     if len(data.shape) == 1:
         data = data[:, None]
-    
+
     # Hankel parameters
-    if p == -1:
-        p = len(data)
-    if not q:
-        q = p
+    if not p:
+        p = len(data) - q
     all_hmats = list()
     for row in data.T:
-
-        first, last = row[-(p+q):-p], row[-p:]
+        first, last = row[-(p + q) : -p], row[-p - 1 :]
         out = hankel(first, last)
-
         all_hmats.append(out)
     out = np.dstack(all_hmats)
-    
-    return np.transpose(out, (1, 0, 2))
-
-def hankel_matrix_rowwise(data, p=-1, q=None):
-    """
-    Find the Hankel matrix separately for each row of a data matrix
-    q : int, the width of the matrix
-    """
-    all_hmats = list()
-    for row in data:
-        all_hmats.append(hankel_matrix(row, p, q=q))
-    return np.dstack(all_hmats).T[..., None]
+    return np.transpose(out, (1, 0, 2))[:-1]
 
 
 def train_test(dataset, sample_size, time_window, std=1.0, split=0.5):
@@ -89,13 +77,9 @@ def train_test(dataset, sample_size, time_window, std=1.0, split=0.5):
 
     assert n > sample_size + n_split, "Not enough data to make complete split"
     
-    hm_train = hankel_matrix(dataset, sample_size, q=time_window)#[np.newaxis, ...].T
-    hm_test = hankel_matrix(dataset[:(n_split+time_window)], sample_size, q=time_window)#[np.newaxis, ...].T
-    
-    #hm = hankel_matrix(dataset, n-time_window, q=time_window)
-    #hm = hm[np.newaxis, ...].T
-    #hm_train, hm_test = hm[:sample_size], hm[-n_split:]
-    
+    hm_train = hankel_matrix(dataset, time_window, p=sample_size)#[np.newaxis, ...].T
+    hm_test = hankel_matrix(dataset[:(n_split+time_window)], time_window, p=sample_size)#[np.newaxis, ...].T
+
     mn_train, std_train = np.mean(hm_train), np.std(hm_train)
     
     X_train, X_test = [(item - mn_train)/(std*std_train) for item in (hm_train, hm_test)]
@@ -198,7 +182,6 @@ def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None,
 
     if not color_proj:
         color_proj = lighter(color, .6)
-
 
     if np.isscalar(shadow_dist) == 1:
         sdist_x = shadow_dist

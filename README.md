@@ -47,9 +47,9 @@ Models follow the `scikit-learn` API
 
 More detailed examples may be found in the various tutorial notebooks in the `demos` directory
 
-+ `demos.ipynb` shows the step-by-step process of constructing embeddings of the Lorenz attractor,  experimental measurements of a double pendulum, a quasiperiodic torus, the Rössler attractor, and a high-dimensional chaotic ecosystem.
-+ `compare.ipynb` trains an LSTM and MLP with the FNN regularizer, as well as comparison models with tICA, ETD, and Average Mutual Information embeddings.
-+ `exploratory.ipynb` applies the embedding technique to several real-world time series datasets, such as electrocardiogram measurements, neural spiking, and measurements of eruptions of the Old Faithful geyser.
++ [`demos.ipynb`](demos.ipynb) shows the step-by-step process of constructing embeddings of the Lorenz attractor,  experimental measurements of a double pendulum, a quasiperiodic torus, the Rössler attractor, and a high-dimensional chaotic ecosystem.
++ [`compare.ipynb`](compare.ipynb) trains an LSTM and MLP with the FNN regularizer, as well as comparison models with tICA, ETD, and Average Mutual Information embeddings.
++ [`exploratory.ipynb`](exploratory.ipynb) applies the embedding technique to several real-world time series datasets, such as electrocardiogram measurements, neural spiking, and measurements of eruptions of the Old Faithful geyser.
 
 
 # Sources and related work
@@ -60,7 +60,7 @@ In order to provide a baseline embedding technique for comparison, the file `tic
 
 # Datasets
 
-The folder `datasets` contains abridged versions of several time series datasets used for testing and evaluating the code. We summarize these files, and provide their original sources, here:
+The [`datasets`](exploratory.ipynb) folder contains abridged versions of several time series datasets used for testing and evaluating the code. We summarize these files, and provide their original sources, here:
 + `geyser_train_test.csv` corresponds to detrended temperature readings from the main runoff pool of the Old Faithful geyser in Yellowstone National Park, downloaded from the [GeyserTimes database](https://geysertimes.org/).  Temperature measurements start on April 13, 2015 and occur in one-minute increments. 
 + `electricity_train_test.csv` corresponds to average power consumption by 321 Portuguese households  between 2012 and 2014, in units of kilowatts consumed in fifteen minute increments. This dataset is from the [UCI machine learning database](http://archive.ics.uci.edu/ml/datasets/ElectricityLoadDiagrams20112014).
 + `pendulum_train.csv` and `pendulum_test.csv` correspond to two different double pendulum experiments, taken from a series of experiments by [Asseman et al.](https://developer.ibm.com/exchanges/data/all/double-pendulum-chaotic/). In Asseman et al.'s original study, pendula were filmed and segmented to produce (x, y) positions of centroids over time. Here, we have converted the dataset into the four canonical Hamiltonian coordinates (theta1, theta2, p1, p2).
