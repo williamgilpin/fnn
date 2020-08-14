@@ -4,7 +4,7 @@ TensorFlow functions to support the false nearest neighbor regularizer
 import tensorflow as tf
 import numpy as np
 import warnings
-from utils import standardize_ts, hankel_matrix
+from utils import standardize_ts, hankel_matrix, resample_dataset
 from tica import tICA
 
 # tf.__version__ must be greater than 2
@@ -457,7 +457,7 @@ class TimeSeriesEmbedding:
            
     def transform(self, X, y=None):
         raise AttributeError("Derived class does not contain method.")
-    
+
     def fit_transform(self, X, y=None, **kwargs):
         """Fit the model with a time series X, and then embed X.
 
@@ -504,7 +504,8 @@ class ETDEmbedding(TimeSeriesEmbedding):
             self.model = KernelPCA(
                 n_components = self.n_latent, 
                 kernel=kernel,
-                random_state = self.random_state
+                random_state = self.random_state,
+                copy_X=False
                 )
         elif sparse:
             self.model = SparsePCA(
@@ -518,7 +519,7 @@ class ETDEmbedding(TimeSeriesEmbedding):
                 )
                 
     
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, subsample=None):
         """Fit the model with a time series X
 
         Parameters
@@ -530,6 +531,10 @@ class ETDEmbedding(TimeSeriesEmbedding):
         y : None
             Ignored variable.
 
+        subsample : int or None
+            If set to an integer, a random number of timepoints is selected
+            equal to that integer
+
         Returns
         -------
         X_new : array-like, shape (n_timepoints, n_components)
@@ -538,6 +543,10 @@ class ETDEmbedding(TimeSeriesEmbedding):
         # Make hankel matrix from dataset
         Xs = standardize_ts(X)
         X_train = hankel_matrix(Xs, self.time_window)
+        if subsample:
+            self.train_indices, X_train = resample_dataset(
+                X_train, subsample, random_state=self.random_state
+            )
         self.model.fit(np.reshape(X_train, (X_train.shape[0], -1)))
         
     def transform(self, X, y=None):
@@ -700,7 +709,7 @@ class TICAEmbedding(TimeSeriesEmbedding):
         else:
             raise ValueError("Time delay parameter must be greater than or equal to zero.")
     
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, subsample=None):
         """Fit the model with a time series X
 
         Parameters
@@ -712,6 +721,10 @@ class TICAEmbedding(TimeSeriesEmbedding):
         y : None
             Ignored variable.
 
+        subsample : int or None
+            If set to an integer, a random number of timepoints is selected
+            equal to that integer
+
         Returns
         -------
         X_new : array-like, shape (n_timepoints, n_components)
@@ -720,6 +733,11 @@ class TICAEmbedding(TimeSeriesEmbedding):
         # Make hankel matrix from dataset
         Xs = standardize_ts(X)
         X_train = hankel_matrix(Xs, self.time_window)
+
+        if subsample:
+            self.train_indices, X_train = resample_dataset(
+                X_train, subsample, random_state=self.random_state
+            )
         if self.time_lag > 0:
             self.model.fit([np.reshape(X_train, (X_train.shape[0], -1))])
         else:
@@ -768,7 +786,8 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
         batch_size=100, 
         train_steps=200,
         loss='mse',
-        verbose=0
+        verbose=0,
+        subsample=None
     ):
         """Fit the model with a time series X
 
@@ -781,6 +800,11 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
         y : None
             Ignored variable.
 
+        subsample : int or None
+            If set to an integer, a random number of timepoints is selected
+            equal to that integer
+
+
         Returns
         -------
         X_new : array-like, shape (n_timepoints, n_components)
@@ -789,6 +813,10 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
         # Make hankel matrix from dataset
         Xs = standardize_ts(X)
         X_train = hankel_matrix(Xs, self.time_window)
+        if subsample:
+            self.train_indices, X_train = resample_dataset(
+                X_train, subsample, random_state=self.random_state
+            )
 
         tf.random.set_seed(self.random_state)
         np.random.seed(self.random_state)

@@ -61,6 +61,35 @@ def _hankel_matrix(data, q, p=None):
     out = np.dstack(all_hmats)
     return np.transpose(out, (1, 0, 2))[:-1]
 
+def resample_dataset(
+    data, n_samples=None, randomize=True, random_state=None
+):
+    """
+    Generate random samples from a dataset. This function is comparable to the
+    deprecated np.shuffle, but it protects the original dataset
+    
+    Arguments
+    data : [N, ...] ndarray
+        A collection of N datasets
+    n_samples : int
+        The number of rows to sample from the matrix
+    randomize : bool
+        Select random subsets of the data without replacement, and
+        return the indices of the chosen subsets
+    random_state : int
+        The random seed when using randomization
+    """
+    np.random.seed(random_state)
+    if not n_samples:
+        n_samples = data.shape[0]
+    if randomize:
+        selection_indices = np.random.choice(
+            np.arange(data.shape[0]), n_samples, replace=False
+        )
+    else:
+        selection_indices = np.arange(n_samples)
+    return selection_indices, data[selection_indices]
+
 
 def train_test(dataset, sample_size, time_window, std=1.0, split=0.5):
     """
