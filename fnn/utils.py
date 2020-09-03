@@ -255,3 +255,14 @@ def lighter(clr, f=1/3):
     gaps = [f*(1 - val) for val in clr]
     new_clr = [val + gap for gap, val in zip(gaps, clr)]
     return new_clr
+
+def darker(clr, f=1/3):
+    """
+    An implementation of Mathematica's Darker[] 
+    function for RGB colors
+    clr : 3-tuple or list, an RGB color
+    f : float, the fraction by which to brighten
+    """
+    gaps = [f*val for val in clr]
+    new_clr = [val - gap for gap, val in zip(gaps, clr)]
+    return new_clr

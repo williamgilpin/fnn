@@ -2,6 +2,7 @@
 TensorFlow functions to support the false nearest neighbor regularizer
 """
 import tensorflow as tf
+import tensorflow_addons as tfa
 import numpy as np
 import warnings
 from utils import standardize_ts, hankel_matrix, resample_dataset
@@ -18,7 +19,8 @@ if use_legacy:
 
 from sklearn.decomposition import PCA, SparsePCA, KernelPCA, FastICA
 
-    
+from networks import *
+
 class FNN(tf.keras.regularizers.Regularizer):
     """An activity regularizer that penalizes false-nearest-neighbors
     
@@ -29,15 +31,36 @@ class FNN(tf.keras.regularizers.Regularizer):
     k : int
         The number of neighbors to use for distance calculation. 
         Traditionally set equal to one
-    
     """
 
-    def __init__(self, strength, batch_size=1, k=1):
+    def __init__(self, strength, k=1):
         self.strength = strength
         self.k = k
 
     def __call__(self, x):
         return self.strength * loss_false(x, k=self.k)
+
+# class FNNTimeIndexed(tf.keras.regularizers.Regularizer):
+#     """An activity regularizer that penalizes false-nearest-neighbors
+#     This version of the regularizer works with latent spaces that
+#     retain a time dimension
+    
+#     Parameters
+#     ----------
+#     strength : float
+#         The relative strength of the regularizer
+#     k : int
+#         The number of neighbors to use for distance calculation. 
+#         Traditionally set equal to one
+#     """
+
+#     def __init__(self, strength, k=1):
+#         self.strength = strength
+#         self.k = k
+
+#     def __call__(self, x):
+#         #x = tf.keras.layers.Flatten()(x)
+#         return self.strength * loss_false(x[:, -1, :], k=self.k)
 
     
 class DeCov(tf.keras.regularizers.Regularizer):
@@ -56,367 +79,10 @@ class DeCov(tf.keras.regularizers.Regularizer):
     def __call__(self, x):
         return self.strength * loss_cov(x)
     
-L1Reg = tf.keras.regularizers.L1 
 # Alias of built-in for API consistency
-
-
-class CausalAutoencoder(tf.keras.Model):
-    """
-    A causal autoencoder model for time series
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[10, 10],
-        latent_regularizer=None,
-        kernel_size=3,
-        dilation_scale=2,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
-        super().__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        self.encoder = tf.keras.Sequential()
-        for i, hidden_size in enumerate(network_shape):
-            self.encoder.add(
-                tf.keras.layers.Conv1D(
-                    hidden_size, 
-                    kernel_size,
-                    strides=1, 
-                    padding="causal",
-                    dilation_rate=dilation_scale**i,
-                    activation=None, 
-                    name="conv" + str(i),
-                    **rnn_opts
-                )
-            )
-
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-        self.encoder.add(tf.keras.layers.Flatten())
-        self.encoder.add(tf.keras.layers.Dense(n_latent))
-        
-        
-        self.decoder = tf.keras.Sequential()
-
-        self.decoder.add(tf.keras.layers.Dense(units=time_window*network_shape[-1], activation=None))
-        self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.Reshape(target_shape=(time_window, network_shape[-1])))
-
-        for i, hidden_unit in enumerate(network_shape[::-1] + [n_features]):
-            upsamp_factor = dilation_scale**(len(network_shape) - i)
-
-            self.decoder.add(
-                tf.keras.layers.Conv1DTranspose(
-                    hidden_unit, 
-                    kernel_size, # kernel size
-                    strides=1, 
-                    padding='same', #same?
-                    dilation_rate=upsamp_factor,
-                    activation=None,
-                    name="deconv" + str(i),
-                    **rnn_opts
-                )
-            )
-
-            self.decoder.add(tf.keras.layers.BatchNormalization())
-            # no activation on final layer
-            if i < len(network_shape):
-                self.decoder.add(tf.keras.layers.Activation(activation_func))
-    
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-
-class MLPAutoencoder(tf.keras.Model):
-    """
-    A fully-connected autoencoder model for time series
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[10, 10],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
-        super(MLPAutoencoder, self).__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.Flatten())
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(time_window,))) # smooths the output
-        for hidden_size in network_shape:
-            self.encoder.add(tf.keras.layers.Dense(hidden_size, **rnn_opts))
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-        self.encoder.add(tf.keras.layers.Dense(n_latent, input_shape=(time_window,), **rnn_opts))
-        self.encoder.add(tf.keras.layers.BatchNormalization())
-        self.encoder.add(
-            tf.keras.layers.Reshape(
-                (n_latent,),  
-                activity_regularizer=latent_regularizer
-            )
-        )
-
-        ## Decoder
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.Flatten())
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
-        for hidden_size in network_shape[::-1]:
-            self.decoder.add(tf.keras.layers.Dense(hidden_size,  **rnn_opts))
-            self.decoder.add(tf.keras.layers.BatchNormalization())
-            self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.Dense(time_window*n_features, **rnn_opts))
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        #self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.Reshape((time_window, n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-
-class MLPAutoencoderLegacy(tf.keras.Model):
-    """
-    A fully-connected autoencoder model for time series
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[10, 10],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-    ):
-        super().__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.Flatten())
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(time_window,))) # smooths the output
-        
-        for  hidden_size in network_shape:
-            self.encoder.add(tf.keras.layers.Dense(hidden_size, **rnn_opts))
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-    
-        self.encoder.add(tf.keras.layers.Dense(self.n_latent, input_shape=(self.time_window,), **rnn_opts))
-        self.encoder.add(tf.keras.layers.BatchNormalization())
-        #enc.add(tf.keras.layers.Activation(activation_func))
-
-        self.encoder.add(tf.keras.layers.Reshape((self.n_latent,), 
-                                                 activity_regularizer=latent_regularizer))
-
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.Flatten())
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
-
-        for hidden_size in network_shape[::-1]:
-            self.decoder.add(tf.keras.layers.Dense(hidden_size,  **rnn_opts))
-            self.decoder.add(tf.keras.layers.BatchNormalization())
-            self.decoder.add(tf.keras.layers.Activation(activation_func))
-
-
-        self.decoder.add(tf.keras.layers.Dense(self.time_window*self.n_features, **rnn_opts))
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        self.decoder.add(tf.keras.layers.Activation(activation_func))
-
-        self.decoder.add(tf.keras.layers.Reshape((self.time_window, self.n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-    
-    
-class LSTMAutoencoder(tf.keras.Model):
-    """
-    An LSTM autoencoder model for time series
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
-        super(LSTMAutoencoder, self).__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5)) # smooths the output
-        
-        for i, hidden_size in enumerate(network_shape):
-            self.encoder.add(
-                tf.keras.layers.LSTM(
-                    hidden_size,
-                    #input_shape=(time_window, n_features),
-                    return_sequences=True,
-                    name="lstm_encoder_"+str(i),
-                    **rnn_opts
-                )
-            )
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-        self.encoder.add(
-            tf.keras.layers.LSTM(
-                n_latent,
-                #input_shape=(time_window, n_features),
-                return_sequences=False,
-                name="lstm_encoder_final",
-                **rnn_opts
-            )
-        )
-        self.encoder.add(tf.keras.layers.BatchNormalization(activity_regularizer=latent_regularizer))
-            
-        ## Decoder
-        self.decoder = tf.keras.Sequential()
-        
-        #self.decoder.add(tf.keras.layers.RepeatVector(time_window))
-        
-#         self.decoder.add(tf.keras.layers.Dense(n_latent*time_window))
-#         self.decoder.add(tf.keras.layers.Reshape((n_latent, time_window)))
-        
-#         self.decoder.add(tf.keras.layers.RepeatVector(time_window))
-#         self.decoder.add(tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_latent)))
-        
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
-        self.decoder.add(tf.keras.layers.RepeatVector(time_window))
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                n_latent,
-                #input_shape=(time_window, n_features),
-                return_sequences=True,
-                name="lstm_decoder_initial",
-                **rnn_opts
-            )
-        )
-        
-        
-        for i, hidden_size in enumerate(network_shape[::-1]):
-            self.decoder.add(
-                tf.keras.layers.LSTM(
-                    hidden_size, 
-                    return_sequences=True, 
-                    go_backwards=True, 
-                    name="lstm_decoder_"+str(i),
-                    **rnn_opts
-                )
-            )
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                n_features, 
-                return_sequences=True, 
-                go_backwards=True, 
-                name="lstm_decoder_final"),
-                **rnn_opts
-        )
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        #self.decoder.add(tf.keras.layers.Activation(activation_func))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-    
-class LSTMAutoencoderLegacy(tf.keras.Model):
-    """
-    An LSTM autoencoder model, based on the architecture used in the original 
-    FNN preprint
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
-        super().__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5))  # smooths the output
-        self.encoder.add(
-            tf.keras.layers.LSTM(
-                self.n_latent,
-                input_shape=(self.time_window, self.n_features),
-                return_sequences=False,
-                **rnn_opts
-            )
-        )
-        self.encoder.add(tf.keras.layers.BatchNormalization(activity_regularizer=latent_regularizer))
-        
-        
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.RepeatVector(self.time_window))
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5))
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                self.n_latent, return_sequences=True, go_backwards=True, **rnn_opts
-            )
-        )
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-    
+L1Reg = tf.keras.regularizers.L1 
+L2Reg = tf.keras.regularizers.L2
+  
 class TimeSeriesEmbedding:
     """Base class for time series embedding
     
@@ -777,6 +443,9 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
         **kwargs
     ):
         super().__init__(*args, **kwargs)
+        # # Default latent regularizer is FNN
+        # if np.isscalar(latent_regularizer):
+        #     latent_regularizer = FNN(latent_regularizer)
     
     def fit(
         self, 
@@ -787,6 +456,7 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
         train_steps=200,
         loss='mse',
         verbose=0,
+        optimizer="adam",
         subsample=None
     ):
         """Fit the model with a time series X
@@ -818,10 +488,17 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
                 X_train, subsample, random_state=self.random_state
             )
 
+
+        optimizers = {
+            "adam": tf.keras.optimizers.Adam(lr=learning_rate),
+            "nadam": tf.keras.optimizers.Nadam(lr=learning_rate),
+            "radam": tfa.optimizers.RectifiedAdam(lr=learning_rate)
+        }
+
         tf.random.set_seed(self.random_state)
         np.random.seed(self.random_state)
         self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(lr=learning_rate), 
+            optimizer=optimizers[optimizer], 
             loss=loss,
             #experimental_run_tf_function=False
         )    
@@ -837,8 +514,39 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
     def transform(self, X, y=None):
         X_test = hankel_matrix(standardize_ts(X), self.time_window)
         X_new = self.model.encoder.predict(X_test)
-        return X_new      
+        return X_new 
 
+# class CausalEmbedding(NeuralNetworkEmbedding):
+#     """
+#     Calculates strides and input size automatically
+#     """
+#     def __init__(
+#         self,
+#         *args,
+#         network_shape=[10, 10],
+#         **kwargs
+#     ):  
+#         super().__init__(*args, **kwargs)
+#         self.depth = len(network_shape)
+#         print(self.n_latent)
+#         stride_size = math.floor(math.log(self.time_window/self.n_latent, (2*self.depth)))
+#         final_conv_size = math.ceil(self.time_window/(stride_size**(2*self.depth)))
+#         time_window_new = final_conv_size*(stride_size**(2*self.depth))
+#         #print(time_window_new, stride_size, final_conv_size)
+#         if time_window_new != self.time_window:
+#             self.time_window = time_window_new
+#             print("Time window increased to ", str(time_window_new), ", an integer power",
+#              "of stride size. If this is too large, decrease network depth or latent size")
+#         print("Effective stride size is ", str(stride_size**2)) # each block does two downsampling
+#         print("Final convolution size is ", str(final_conv_size))
+
+#         self.model = CausalAutoencoder(
+#             self.n_latent,
+#             network_shape=network_shape,
+#             conv_output_shape=final_conv_size,
+#             strides = stride_size,
+#             **kwargs
+#         )
 
 class MLPEmbedding(NeuralNetworkEmbedding):
     def __init__(
@@ -880,7 +588,7 @@ class CausalEmbedding(NeuralNetworkEmbedding):
         **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.model = CausalAutoencoder(
+        self.model = CausalAE(
             self.n_latent,
             **kwargs
         )
