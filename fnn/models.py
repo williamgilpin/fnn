@@ -512,6 +512,7 @@ class MLPEmbedding(NeuralNetworkEmbedding):
         super().__init__(*args, **kwargs)
         self.model = MLPAutoencoder(
             self.n_latent,
+            self.time_window,
             **kwargs
         )
 
@@ -523,15 +524,16 @@ class LSTMEmbedding(NeuralNetworkEmbedding):
     ):
         super().__init__(*args, **kwargs)
         
-        
         if use_legacy:
             self.model = LSTMAutoencoderLegacy(
                 self.n_latent,
+                self.time_window,
                 **kwargs
             ) 
         else:
             self.model = LSTMAutoencoder(
                 self.n_latent,
+                self.time_window,
                 **kwargs
             )
 
@@ -540,108 +542,22 @@ class CausalEmbedding(NeuralNetworkEmbedding):
     def __init__(
         self,
         *args,
+        strides=1, 
+        network_shape=[10, 10],
         **kwargs
     ):
         super().__init__(*args, **kwargs)
+        kwargs.pop("time_window")
+        time_window_downsampled = math.ceil(self.time_window/(strides**(len(network_shape))))
+        time_window_upsampled = time_window_downsampled*(strides**(len(network_shape)))
+        if time_window_upsampled != self.time_window:
+            print("non-integer stride output detected; using closest time window " + str(time_window_upsampled))
+            self.time_window = time_window_upsampled
+        
         self.model = CausalAE(
             self.n_latent,
+            self.time_window,
+            strides=strides,
+            network_shape=network_shape,
             **kwargs
         )
-
-
-###------------------------------------###
-#
-#
-#       Losses and Analysis Functions
-#
-#
-###------------------------------------###
-
-# # @tf.function
-# # @tf.autograph.experimental.do_not_convert
-# def loss_false(code_batch, k=1):
-#     """
-#     An activity regularizer based on the False-Nearest-Neighbor
-#     Algorithm of Kennel, Brown,and Arbanel. Phys Rev A. 1992
-    
-#     Parameters
-#     ----------
-#     code_batch: tensor
-#         (Batch size, Embedding Dimension) tensor of encoded inputs
-#     k: int 
-#         The number of nearest neighbors used to compute 
-#         neighborhoods.
-#     """
-
-#     _, n_latent = code_batch.get_shape()
-
-#     # changing these parameters is equivalent to changing the strength of the
-#     # regularizer, so we keep these fixed (these values correspond to the
-#     # original values used in Kennel et al 1992).
-#     rtol = 20.0
-#     atol = 2.0
-#     #     k_frac = 0.01
-#     #     n_batch = tf.cast(tf.keras.backend.shape(code_batch)[0], tf.float32)
-#     #     assert False, n_batch
-#     #     k = max(1, int(k_frac * n_batch))
-
-#     ## Vectorized version of distance matrix calculation
-#     tri_mask = tf.linalg.band_part(tf.ones((n_latent, n_latent), tf.float32), -1, 0)
-#     batch_masked = tf.multiply(tri_mask[:, tf.newaxis, :], code_batch[tf.newaxis, ...])
-#     X_sq = tf.reduce_sum(batch_masked * batch_masked, axis=2, keepdims=True)
-#     pdist_vector = (
-#         X_sq
-#         + tf.transpose(X_sq, [0, 2, 1])
-#         - 2 * tf.matmul(batch_masked, tf.transpose(batch_masked, [0, 2, 1]))
-#     )
-#     all_dists = pdist_vector
-#     all_ra = tf.sqrt(
-#         (1 / (tf.range(1, 1 + n_latent, dtype=tf.float32)))
-#         * tf.squeeze(
-#             tf.reduce_sum(
-#                 tf.square(tf.math.reduce_std(batch_masked, axis=1, keepdims=True)),
-#                 axis=2,
-#             )
-#         )
-#     )
-
-#     # Avoid singularity in the case of zeros
-#     all_dists = tf.clip_by_value(all_dists, 1e-14, tf.reduce_max(all_dists))
-
-#     # inds = tf.argsort(all_dists, axis=-1)
-#     _, inds = tf.math.top_k(-all_dists, k + 1)
-#     # top_k currently faster than argsort because it truncates matrix
-
-#     neighbor_dists_d = tf.gather(all_dists, inds, batch_dims=-1)
-#     neighbor_new_dists = tf.gather(all_dists[1:], inds[:-1], batch_dims=-1)
-
-#     # Eq. 4 of Kennel et al.
-#     scaled_dist = tf.sqrt(
-#         (tf.square(neighbor_new_dists) - tf.square(neighbor_dists_d[:-1]))
-#         / tf.square(neighbor_dists_d[:-1])
-#     )
-
-#     # Kennel condition #1
-#     is_false_change = scaled_dist > rtol
-#     # Kennel condition 2
-#     is_large_jump = neighbor_new_dists > atol * all_ra[:-1, tf.newaxis, tf.newaxis]
-
-#     is_false_neighbor = tf.math.logical_or(is_false_change, is_large_jump)
-#     total_false_neighbors = tf.cast(is_false_neighbor, tf.int32)[..., 1 : (k + 1)]
-
-#     # Pad zero to match dimensionality of latent space
-#     reg_weights = 1 - tf.reduce_mean(
-#         tf.cast(total_false_neighbors, tf.float64), axis=(1, 2)
-#     )
-#     reg_weights = tf.pad(reg_weights, [[1, 0]])
-
-#     # Find average batch activity
-#     activations_batch_averaged = tf.sqrt(tf.reduce_mean(tf.square(code_batch), axis=0))
-
-#     # L2 Activity regularization
-#     activations_batch_averaged = tf.cast(activations_batch_averaged, tf.float64)
-#     loss = tf.reduce_sum(tf.multiply(reg_weights, activations_batch_averaged))
-
-#     return tf.cast(loss, tf.float32)
-
-

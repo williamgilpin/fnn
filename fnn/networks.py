@@ -8,7 +8,6 @@ from utils import standardize_ts, hankel_matrix, resample_dataset
 import math
 
 from layers import *
-# from tica import tICA
 
 # # tf.__version__ must be greater than 2
 # # print(len(tf.config.list_physical_devices('GPU')), "GPUs available.")
@@ -36,6 +35,7 @@ class CausalAE(tf.keras.Model):
         rnn_opts=dict(),
         activation_func=tf.keras.layers.ELU(alpha=1.0),
         random_state=None,
+        add_noise=False,
         **kwargs
     ):
         super().__init__()
@@ -54,6 +54,7 @@ class CausalAE(tf.keras.Model):
         tf.random.set_seed(random_state)
         
         self.encoder = tf.keras.Sequential()
+        self.encoder.add(tf.keras.layers.GaussianNoise(0.5))
         for i, hidden_size in enumerate(network_shape):
             self.encoder.add(
                 CausalConv1D(
@@ -80,6 +81,7 @@ class CausalAE(tf.keras.Model):
             )
         
         self.decoder = tf.keras.Sequential()
+        self.decoder.add(tf.keras.layers.GaussianNoise(0.5))
         self.decoder.add(tf.keras.layers.Dense(units=time_window_downsampled*network_shape[-1], activation=None))
         self.decoder.add(tf.keras.layers.Activation(activation_func))
         self.decoder.add(tf.keras.layers.Reshape(target_shape=(time_window_downsampled, network_shape[-1])))
@@ -151,101 +153,85 @@ class CausalAE(tf.keras.Model):
 #         return outputs
 
 
-class CausalAutoencoder(tf.keras.Model):
-    """
-    Consider taking the time window as an explicit argument, in order to avoid
-    the upsampling ambiguity
-    """
+# class CausalAutoencoder(tf.keras.Model):
+#     """
+#     Consider taking the time window as an explicit argument, in order to avoid
+#     the upsampling ambiguity
+#     """
     
-    def __init__(
-            self,
-            n_latent,
-            #time_window, 
-            depth=3,
-            units_per_layer=10,
-            n_features=1,
-            network_shape=[10, 10],
-            latent_regularizer=None,
-            kernel_size=3,
-            dilation_rate=2,
-            strides=1,
-            activation_func=tf.nn.elu,
-            random_state=None,
-            conv_output_shape=None,
-            **kwargs
-        ):
-            super().__init__()
-            self.n_latent = n_latent
-            #self.time_window = time_window
-            self.n_features = n_features
-            self.network_shape = network_shape
-            self.strides = strides
+#     def __init__(
+#             self,
+#             n_latent,
+#             #time_window, 
+#             depth=3,
+#             units_per_layer=10,
+#             n_features=1,
+#             network_shape=[10, 10],
+#             latent_regularizer=None,
+#             kernel_size=3,
+#             dilation_rate=2,
+#             strides=1,
+#             activation_func=tf.nn.elu,
+#             random_state=None,
+#             conv_output_shape=None,
+#             **kwargs
+#         ):
+#             super().__init__()
+#             self.n_latent = n_latent
+#             self.time_window = time_window
+#             self.n_features = n_features
+#             self.network_shape = network_shape
+#             self.strides = strides
 
 
-            #self.depth = len(network_shape)
+#             #self.depth = len(network_shape)
 
-            # Initialize state
-            tf.random.set_seed(random_state)
+#             # Initialize state
+#             tf.random.set_seed(random_state)
 
-            #self.even_shape = self.strides**(2*len(network_shape))
-            # factor of 2 comes from the two blocks
+#             #self.even_shape = self.strides**(2*len(network_shape))
+#             # factor of 2 comes from the two blocks
 
-            if not conv_output_shape:
-                conv_output_shape = n_latent
+#             if not conv_output_shape:
+#                 conv_output_shape = n_latent
 
-            self.encoder = tf.keras.Sequential([
-                CausalCNN(n_latent, 
-                    network_shape, 
-                    kernel_size = kernel_size,
-                    strides=strides,
-                    ),
-                tf.keras.layers.Reshape([-1]),
-                tf.keras.layers.Dense(
-                    n_latent, 
-                    activation=None,
-                    activity_regularizer=latent_regularizer
-                    )
-                ])
+#             self.encoder = tf.keras.Sequential([
+#                 CausalCNN(n_latent, 
+#                     network_shape, 
+#                     kernel_size = kernel_size,
+#                     strides=strides,
+#                     ),
+#                 tf.keras.layers.Reshape([-1]),
+#                 tf.keras.layers.Dense(
+#                     n_latent, 
+#                     activation=None,
+#                     activity_regularizer=latent_regularizer
+#                     )
+#                 ])
 
-            self.decoder = tf.keras.Sequential([
-                tf.keras.layers.Dense(
-                    conv_output_shape*n_latent, 
-                    activation=None
-                    ),
-                tf.keras.layers.Reshape([-1, n_latent]),
-                CausalCNN(n_features, 
-                    network_shape, 
-                    kernel_size = kernel_size,
-                    strides=strides,
-                    transpose=True
-                    )
-                ])
-
-    # def build(self, input_shape):
-    #     """Defer building decoder until input shape is known"""
-    #     _, n_time, _ = input_shape 
-    #     rounded_val = math.ceil(n_time / self.even_shape)
-    #     self.safe_pad = self.even_shape*rounded_val - n_time
-    #     self.best_stride = math.floor(math.log(n_time/self.n_latent, (2*self.depth)))
-
-    #     qq = math.ceil(n_time/(self.best_stride**(2*self.depth)))
-    #     print("stride", self.best_stride)
-    #     print(qq)
-    #     print(qq*(self.best_stride**(2*self.depth)) )
-        #latent_shapes = [math.ceil(n_time/(self.strides**(2*i))) for i in len(self.network_shape)]
-
-        # print(math.ceil(5001/(strides**(2*len(network_shape))))) # latent size
-
+#             self.decoder = tf.keras.Sequential([
+#                 tf.keras.layers.Dense(
+#                     conv_output_shape*n_latent, 
+#                     activation=None
+#                     ),
+#                 tf.keras.layers.Reshape([-1, n_latent]),
+#                 CausalCNN(n_features, 
+#                     network_shape, 
+#                     kernel_size = kernel_size,
+#                     strides=strides,
+#                     transpose=True
+#                     )
+#                 ])
             
-    def call(self, inputs, training=False):
-        # outputs = self.decoder(
-        #     self.encoder(
-        #         tf.pad(inputs, [[0,0], [self.safe_pad, 0], [0, 0]])
-        #         )
-        #     )
-        # return outputs[:, self.safe_pad:, :]
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
+#     def call(self, inputs, training=False):
+#         # outputs = self.decoder(
+#         #     self.encoder(
+#         #         tf.pad(inputs, [[0,0], [self.safe_pad, 0], [0, 0]])
+#         #         )
+#         #     )
+#         # return outputs[:, self.safe_pad:, :]
+#         outputs = self.decoder(self.encoder(inputs))
+#         return outputs
         
 
 
