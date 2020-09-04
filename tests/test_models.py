@@ -18,7 +18,8 @@ import sys
 
 sys.path.insert(1, os.path.join(WORKING_DIR, "fnn"))
 from utils import hankel_matrix
-from models import FNN, loss_false, LSTMEmbedding, MLPEmbedding
+from models import LSTMEmbedding, MLPEmbedding
+from regularizers import FNN, loss_false
 
 
 class TestUtilities(unittest.TestCase):
@@ -31,7 +32,7 @@ class TestUtilities(unittest.TestCase):
         Test hankel matrix construction
         """
         data_test = np.ones((1000, 3))
-        hmat = hankel_matrix(data_test, 100, q=3)
+        hmat = hankel_matrix(data_test, p=100, q=3)
 
         assert hmat.shape == (
             100,
@@ -53,7 +54,7 @@ class TestModels(unittest.TestCase):
         model.fit(np.random.random(50))
         model.transform(np.random.random(50))
         latent = model.fit_transform(np.random.random(50))
-        assert latent.shape == (40, 2), "Embedding has the wrong shape"
+        assert latent.shape == (45, 2), "Embedding has the wrong shape"
 
         # Try adding
         model = LSTMEmbedding(
@@ -62,7 +63,7 @@ class TestModels(unittest.TestCase):
         model.fit(np.random.random(50))
         model.transform(np.random.random(50))
         latent = model.fit_transform(np.random.random(50))
-        assert latent.shape == (40, 2), "Embedding has the wrong shape"
+        assert latent.shape == (45, 2), "Embedding has the wrong shape"
 
     def test_mlp(self):
         """
@@ -72,7 +73,7 @@ class TestModels(unittest.TestCase):
         model.fit(np.random.random(50))
         model.transform(np.random.random(50))
         latent = model.fit_transform(np.random.random(50))
-        assert latent.shape == (40, 2), "Embedding has the wrong shape"
+        assert latent.shape == (45, 2), "Embedding has the wrong shape"
 
         # Try adding
         model = MLPEmbedding(
@@ -81,7 +82,7 @@ class TestModels(unittest.TestCase):
         model.fit(np.random.random(50))
         model.transform(np.random.random(50))
         latent = model.fit_transform(np.random.random(50))
-        assert latent.shape == (40, 2), "Embedding has the wrong shape"
+        assert latent.shape == (45, 2), "Embedding has the wrong shape"
 
     def test_fnn_loss(self):
         """
