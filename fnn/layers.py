@@ -4,6 +4,34 @@ TensorFlow functions to support the false nearest neighbor regularizer
 import tensorflow as tf
 import warnings
 
+class TimeMask(tf.keras.layers.Layer):
+    """
+    Apply a constant decay to the second dimension of a tensor
+    Used for weighted more recent timepoints more than further back
+    
+    
+    decay_rate : float
+        The degree by which more recent values are favored
+    
+    reverse : bool
+        Whether to reverse the mask direction across time
+    """
+    def __init__(self, decay_rate=0.0, reverse=True):
+        super(TimeMask, self).__init__()
+        self.decay_rate = decay_rate
+        self.reverse = reverse
+        #self.decay_mask = tf.keras.layers.Lambda(lambda x: x[:, :-chomp_size, :])
+        
+    def build(self, input_shape):
+        self.n_batch, self.n_time, self.n_features = input_shape
+        indices = tf.cast(tf.linspace(0, 1, self.n_time), tf.float32)
+        self.mask = tf.math.exp(-self.decay_rate * indices)[:, None]
+        if self.reverse:
+            self.mask = self.mask[::-1]
+        
+    def call(self, x):
+        return self.mask * x
+
 class Chomp1d(tf.keras.layers.Layer):
     """
     Removes the last elements of a time series. Assumes that the time series
@@ -82,6 +110,63 @@ class CausalConv1D(tf.keras.layers.Layer):
         y = self.chomp1(y)
         h = self.conv1(y)
         return h
+    
+class CausalEncoder(tf.keras.Model):
+    """
+    """
+    def __init__(self,
+                 n_latent,
+                 network_shape=[10,10],
+                 kernel_size=3,
+                 strides=1,
+                 dilation_scale=1,
+                 latent_regularizer=None,
+                 activation_func=tf.nn.elu,
+                 rnn_opts={}
+                ):
+        super(CausalEncoder, self).__init__()
+        self.gn = tf.keras.layers.GaussianNoise(0.5)
+        causal_steps = []
+        for i, hidden_size in enumerate(network_shape):
+            causal_steps.append(
+                CausalConv1D(
+                    hidden_size, 
+                    kernel_size,
+                    strides=strides, 
+                    dilation_rate=dilation_scale**i,
+                    activation=None, 
+                    name="conv" + str(i),
+                    **rnn_opts
+                )
+            )
+            causal_steps.append(tf.keras.layers.BatchNormalization())
+            causal_steps.append(tf.keras.layers.Activation(activation_func))
+            causal_steps.append(TimeMask(20.0, reverse=True))
+            
+        self.causal_block = tf.keras.Sequential(causal_steps)
+        self.skip_down = tf.keras.layers.Conv1D(
+            network_shape[-1], 
+            kernel_size,
+            strides=strides**len(network_shape),
+            padding="SAME",
+            activation=None, 
+            name="skip_down",
+            **rnn_opts
+        )
+        self.flat1 = tf.keras.layers.Flatten()
+        self.dense1 = tf.keras.layers.Dense(
+            n_latent,
+            activation=None,
+            activity_regularizer=latent_regularizer
+        )
+        
+    def call(self, x):
+        xn = self.gn(x)
+        y = self.dense1(self.flat1(self.causal_block(xn) + self.skip_down(xn)))
+#         y = self.dense1(self.flat1(self.causal_block(xn)))
+        return y
+        
+        
     
 class CausalBlock(tf.keras.layers.Layer):
     """

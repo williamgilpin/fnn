@@ -138,7 +138,7 @@ def loss_false(code_batch, k=1):
 
 
 #@tf.function
-def loss_cov(a, whiten=True):
+def loss_cov(a, whiten=False):
     """
     The covariance loss, used to orthogonalize activations. Flattens the batch
     in order to compute elements of covariance matrix
@@ -152,7 +152,7 @@ def loss_cov(a, whiten=True):
     Reference: Cogswell et al. ICLR 2016
     """
     a_mean = tf.reduce_mean(a, axis=0)
-    n_batch = tf.cast(len(a), tf.float32)
+    n_batch = tf.cast(tf.shape(a)[0], tf.float32)
 
     aw = (a - a_mean)
     if whiten:

@@ -57,6 +57,7 @@ class TimeSeriesEmbedding:
         self.time_window = time_window
         self.n_features = n_features
         self.random_state = random_state
+        
     
     def fit(self, X, y=None):
         raise AttributeError("Derived class does not contain method.")
@@ -399,7 +400,8 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
         train_steps=200,
         loss='mse',
         verbose=0,
-        optimizer="adam"
+        optimizer="adam",
+        early_stopping=False
     ):
         """Fit the model with a time series X
 
@@ -458,6 +460,11 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
             #experimental_run_tf_function=False
         )    
         
+        if early_stopping:
+            callbacks = [tf.keras.callbacks.EarlyStopping(monitor='loss', mode='min', patience=3)]
+        else:
+            callbacks = [None]
+        
         self.train_history = self.model.fit(
             x=tf.convert_to_tensor(X_train),                         
             y=tf.convert_to_tensor(Y_train),
@@ -510,6 +517,7 @@ class MLPEmbedding(NeuralNetworkEmbedding):
         **kwargs
     ):
         super().__init__(*args, **kwargs)
+        kwargs.pop("time_window")
         self.model = MLPAutoencoder(
             self.n_latent,
             self.time_window,
@@ -523,7 +531,7 @@ class LSTMEmbedding(NeuralNetworkEmbedding):
         **kwargs
     ):
         super().__init__(*args, **kwargs)
-        
+        kwargs.pop("time_window")
         if use_legacy:
             self.model = LSTMAutoencoderLegacy(
                 self.n_latent,

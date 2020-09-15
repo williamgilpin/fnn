@@ -47,11 +47,21 @@ class CausalAE(tf.keras.Model):
         time_window_upsampled = time_window_downsampled*(strides**(len(network_shape)))
 
         if time_window_upsampled != time_window:
-            print("non-integer stride output detected; please closest time window" + str(time_window_upsampled))
+            print("non-integer stride output detected; use closest time window" + str(time_window_upsampled))
             self.time_window = time_window_upsampled
         
         # Initialize state
         tf.random.set_seed(random_state)
+        
+#         self.encoder = CausalEncoder(n_latent, 
+#                                      kernel_size=kernel_size, 
+#                                      network_shape=network_shape,
+#                                      latent_regularizer=latent_regularizer,
+#                                      dilation_scale=dilation_scale,
+#                                      strides=strides,
+#                                      rnn_opts=rnn_opts,
+#                                      activation_func=activation_func
+#                                     )
         
         self.encoder = tf.keras.Sequential()
         self.encoder.add(tf.keras.layers.GaussianNoise(0.5))
@@ -68,23 +78,45 @@ class CausalAE(tf.keras.Model):
                     **rnn_opts
                 )
             )
-            #print(dilation_scale**i)
             self.encoder.add(tf.keras.layers.BatchNormalization())
             self.encoder.add(tf.keras.layers.Activation(activation_func))
-        self.encoder.add(tf.keras.layers.Flatten())
+        
+        
+#         self.encoder.add(tf.keras.layers.Flatten())
+#         self.encoder.add(
+#             tf.keras.layers.Dense(
+#                 n_latent,
+#                 activation=None,
+#                 activity_regularizer=latent_regularizer
+#                 )
+#             )
+        
         self.encoder.add(
-            tf.keras.layers.Dense(
+            tf.keras.layers.LSTM(
                 n_latent,
                 activation=None,
+                return_sequences=False,
                 activity_regularizer=latent_regularizer
                 )
             )
         
         self.decoder = tf.keras.Sequential()
         self.decoder.add(tf.keras.layers.GaussianNoise(0.5))
-        self.decoder.add(tf.keras.layers.Dense(units=time_window_downsampled*network_shape[-1], activation=None))
+        
+#         self.decoder.add(tf.keras.layers.Dense(units=time_window_downsampled*network_shape[-1], activation=None))
+#         self.decoder.add(tf.keras.layers.Activation(activation_func))
+#         self.decoder.add(tf.keras.layers.Reshape(target_shape=(time_window_downsampled, network_shape[-1])))
+        
+        
+        self.decoder.add(tf.keras.layers.RepeatVector(time_window_downsampled))
+        self.decoder.add(
+            tf.keras.layers.LSTM(
+                network_shape[-1],
+                activation=None,
+                return_sequences=True
+                )
+            )
         self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.Reshape(target_shape=(time_window_downsampled, network_shape[-1])))
 
         for i, hidden_unit in enumerate(network_shape[::-1][1:] + [n_features]):
             upsamp_factor = dilation_scale**(len(network_shape) - i - 1)
@@ -102,14 +134,22 @@ class CausalAE(tf.keras.Model):
                     **rnn_opts
                 )
             )
-
             self.decoder.add(tf.keras.layers.BatchNormalization())
             # no activation on final layer
             if i < len(network_shape):
                 self.decoder.add(tf.keras.layers.Activation(activation_func))
+#         skip_down = tf.keras.layers.Conv1DTranspose(
+#             network_shape[-1], 
+#             kernel_size,
+#             strides=strides**len(network_shape),
+#             padding="SAME"
+#             activation=None, 
+#             name="skip_up",
+#             **rnn_opts
+#         )
     
         
-    def call(self, inputs, training=False):
+    def call(self, inputs, training=False): 
         outputs = self.decoder(self.encoder(inputs))
         return outputs
 

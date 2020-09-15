@@ -173,17 +173,30 @@ def arff_to_data(path, fmt_spec=1):
 ###------------------------------------###
 
 
-def fixed_aspect_ratio(ratio):
+def fixed_aspect_ratio(ratio, ax=None, log=False):
     '''
-    Set a fixed aspect ratio on matplotlib plots regardless of axis units
+    Set a fixed aspect ratio on matplotlib plots 
+    regardless of axis units
     '''
-    xvals, yvals = plt.gca().axes.get_xlim(), plt.gca().axes.get_ylim()
-    xrange = xvals[1]-xvals[0]
-    yrange = yvals[1]-yvals[0]
-    plt.gca().set_aspect(ratio*(xrange/yrange), adjustable='box')
+    if not ax:
+        ax = plt.gca()
+    xvals,yvals = ax.axes.get_xlim(), ax.axes.get_ylim()
+    xrange = xvals[1] - xvals[0]
+    yrange = yvals[1] - yvals[0]
+    if log:
+        xrange = np.log(xvals[1]) - np.log(xvals[0])
+        yrange = np.log(yvals[1]) - np.log(yvals[0])
+    ax.set_aspect(ratio*(xrange/yrange), adjustable='box')
     
-def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None, 
-    elev_azim=(39,-47), show_labels=False, **kwargs):
+def plot3dproj(x, y, z, *args, 
+    ax=None,
+    color=(0,0,0), 
+    shadow_dist=1.0, 
+    color_proj=None, 
+    elev_azim=(39,-47), 
+    show_labels=False, 
+    aspect_ratio=1.0,
+    **kwargs):
     """
     Create a three dimensional plot, with projections onto the 2D coordinate
     planes
@@ -207,8 +220,13 @@ def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None,
         The starting values of elevation and azimuth when viewing the figure
     - show_labels : bool
         Whether to show numerical labels on the axes
+    - aspect_ratio : None or int
+        The integer aspect ratio to impose on the axes. If not passed, the default
+        aspect ratio is used
     """
-
+    if not ax:
+        fig = plt.figure(figsize=(7,7))
+        ax = fig.add_subplot(111, projection= '3d')
     if not color_proj:
         color_proj = lighter(color, .6)
 
@@ -219,8 +237,7 @@ def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None,
     else:
         sdist_x, sdist_y, sdist_z = shadow_dist
 
-    fig = plt.figure(figsize=(7,7))
-    ax = fig.add_subplot(111, projection= '3d')
+
     
     ax.plot(x, z, *args, zdir='y', zs=sdist_y*np.max(y), color=color_proj, **kwargs)
     ax.plot(y, z, *args, zdir='x', zs=sdist_x*np.min(x), color=color_proj, **kwargs)
@@ -235,7 +252,8 @@ def plot3dproj(x, y, z, *args, color=(0,0,0), shadow_dist=1.0, color_proj=None,
 #     xrange = xvals[1]-xvals[0]
 #     yrange = yvals[1]-yvals[0]
 #     ax.set_aspect(ratio*(xrange/yrange), adjustable='box')
-    fixed_aspect_ratio(1.0)
+    if aspect_ratio:
+        fixed_aspect_ratio(aspect_ratio)
 
     if not show_labels:
         ax.set_xticklabels([])                               
