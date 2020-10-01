@@ -187,7 +187,27 @@ def fixed_aspect_ratio(ratio, ax=None, log=False):
         xrange = np.log(xvals[1]) - np.log(xvals[0])
         yrange = np.log(yvals[1]) - np.log(yvals[0])
     ax.set_aspect(ratio*(xrange/yrange), adjustable='box')
+
+def plot_err(y, errs, color=(0,0,0), x=[], alpha=.4, linewidth=1, **kwargs):
+    """
+    errs : Nx1 or Nx2 ndarray
+    kwargs : passed to plot
+    """
+    if len(x)<1:
+        x = np.arange(len(y))
     
+    if len(errs.shape)>1:
+        if errs.shape[1]==2:
+            err_lo, err_hi = errs[:, 0], errs[:, 1]
+    else:
+        err_lo = errs
+        err_hi = errs
+        
+    trace_lo, trace_hi = y - err_lo, y + err_hi
+    
+    plt.fill_between(x, trace_lo, trace_hi, color=lighter(color), alpha=alpha)
+    plt.plot(x, y, color=color, linewidth=linewidth, **kwargs)
+
 def plot3dproj(x, y, z, *args, 
     ax=None,
     color=(0,0,0), 

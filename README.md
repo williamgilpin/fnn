@@ -12,7 +12,7 @@ This package implements many standard time series embedding techniques originall
 
 The neural network and regularizer are further described in the following paper. If using this code for published work, please consider citing the paper.
 
-> William Gilpin. "Deep reconstruction of strange attractors from time series" 2020. [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
+> William Gilpin. "Deep reconstruction of strange attractors from time series" 2020. Advances in Neural Information Processing Systems (NeurIPS) 2020 [https://arxiv.org/abs/2002.05909](https://arxiv.org/abs/2002.05909)
 
 # Installation
 
