@@ -22,8 +22,8 @@ This library requires the following packages
 + Scipy
 + Tensorflow 2.0 or greater
 + Scikit-learn
-+ Matplotlib (for demos)
-+ Jupyter Notebook (for demos)
++ Matplotlib (demos only)
++ Jupyter Notebook (demos only)
 
 To use this repository, directly download the source:
 
