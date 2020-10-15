@@ -2,7 +2,7 @@
 TensorFlow functions to support the false nearest neighbor regularizer
 """
 import tensorflow as tf
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 import numpy as np
 import warnings
 from utils import standardize_ts, hankel_matrix, resample_dataset
@@ -448,8 +448,8 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
 
         optimizers = {
             "adam": tf.keras.optimizers.Adam(lr=learning_rate),
-            "nadam": tf.keras.optimizers.Nadam(lr=learning_rate),
-            "radam": tfa.optimizers.RectifiedAdam(lr=learning_rate)
+            "nadam": tf.keras.optimizers.Nadam(lr=learning_rate)
+            # "radam": tfa.optimizers.RectifiedAdam(lr=learning_rate),
         }
 
         tf.random.set_seed(self.random_state)
