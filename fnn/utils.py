@@ -1,12 +1,7 @@
 import numpy as np
 import warnings
 
-import scipy
-from scipy.linalg import hankel, orthogonal_procrustes
-from scipy.signal import periodogram, argrelextrema, savgol_filter
-from scipy.spatial.distance import pdist, squareform, directed_hausdorff
-from scipy.spatial import procrustes
-
+from scipy.linalg import hankel
 import matplotlib.pyplot as plt
 
 ###------------------------------------###

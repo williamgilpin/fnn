@@ -547,4 +547,47 @@ class LSTMAutoencoderLegacy(tf.keras.Model):
     def call(self, inputs, training=False):
         outputs = self.decoder(self.encoder(inputs))
         return outputs
- 
+    
+    
+class ETDConstrained(tf.keras.Model):
+    """
+    A batchwise fully-connected eigen-time-delay embedding (linear autoencoder)
+    """
+    def __init__(
+        self,
+        n_latent,
+        time_window,
+        n_features=1,
+        latent_regularizer=None,
+        rnn_opts=dict(),
+        random_state=None,
+        **kwargs
+    ):
+        super(ETDConstrained, self).__init__()
+        self.n_latent = n_latent
+        self.time_window = time_window
+        self.n_features = n_features
+        
+        # Initialize state
+        tf.random.set_seed(random_state)
+        
+        # Encoder
+        self.encoder = tf.keras.Sequential()
+        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
+        self.encoder.add(tf.keras.layers.Flatten())
+        self.encoder.add(tf.keras.layers.Dense(n_latent, activation=None, **rnn_opts))
+        self.encoder.add(
+            tf.keras.layers.Reshape(
+                (n_latent,),  
+                activity_regularizer=latent_regularizer
+            )
+        )
+
+        self.decoder = tf.keras.Sequential()
+        self.decoder.add(tf.keras.layers.Flatten())
+        self.decoder.add(tf.keras.layers.Dense(time_window*n_features, activation=None, **rnn_opts))
+        self.decoder.add(tf.keras.layers.Reshape((time_window, n_features)))
+        
+    def call(self, inputs, training=False):
+        outputs = self.decoder(self.encoder(inputs))
+        return outputs

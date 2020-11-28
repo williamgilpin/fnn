@@ -510,6 +510,20 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
 #             **kwargs
 #         )
 
+class ETDConstrainedEmbedding(NeuralNetworkEmbedding):
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        kwargs.pop("time_window")
+        self.model = ETDConstrained(
+            self.n_latent,
+            self.time_window,
+            **kwargs
+        )
+
 class MLPEmbedding(NeuralNetworkEmbedding):
     def __init__(
         self,
