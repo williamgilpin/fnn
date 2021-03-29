@@ -352,7 +352,7 @@ class TICAEmbedding(TimeSeriesEmbedding):
             self.model.fit(np.reshape(X_train, (X_train.shape[0], -1)))
         
     def transform(self, X, y=None):
-        X_test = hankel_matrix(standardize_ts(X), len(X) - self.time_window, q = self.time_window)
+        X_test = hankel_matrix(standardize_ts(X), self.time_window)
         X_test = np.reshape(X_test, (X_test.shape[0], -1))
         if self.time_lag > 0:
             X_new = self.model.transform([X_test])[0]

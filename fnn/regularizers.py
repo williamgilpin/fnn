@@ -109,8 +109,7 @@ def loss_false(code_batch, k=1):
 
     # Eq. 4 of Kennel et al.
     scaled_dist = tf.sqrt(
-        (tf.square(neighbor_new_dists) - tf.square(neighbor_dists_d[:-1]))
-        / tf.square(neighbor_dists_d[:-1])
+        (neighbor_new_dists - neighbor_dists_d[:-1]) / neighbor_dists_d[:-1]
     )
 
     # Kennel condition #1
