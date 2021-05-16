@@ -101,7 +101,7 @@ def loss_false(code_batch, k=1):
     all_dists = tf.clip_by_value(all_dists, 1e-14, tf.reduce_max(all_dists))
 
     # inds = tf.argsort(all_dists, axis=-1)
-    _, inds = tf.math.top_k(-all_dists, k + 1)
+    _, inds = tf.math.top_k(-all_dists, int(k + 1))
     # top_k currently faster than argsort because it truncates matrix
 
     neighbor_dists_d = tf.gather(all_dists, inds, batch_dims=-1)

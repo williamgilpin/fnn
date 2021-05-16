@@ -447,9 +447,9 @@ class NeuralNetworkEmbedding(TimeSeriesEmbedding):
 
 
         optimizers = {
-            "adam": tf.keras.optimizers.Adam(lr=learning_rate),
-            "nadam": tf.keras.optimizers.Nadam(lr=learning_rate)
-            # "radam": tfa.optimizers.RectifiedAdam(lr=learning_rate),
+            "adam": tf.keras.optimizers.Adam(learning_rate=learning_rate),
+            "nadam": tf.keras.optimizers.Nadam(learning_rate=learning_rate)
+            # "radam": tfa.optimizers.RectifiedAdam(learning_rate=learning_rate),
         }
 
         tf.random.set_seed(self.random_state)
