@@ -27,23 +27,28 @@ This library requires the following packages
 
 To use this repository, directly download the source:
 
-	git clone https://github.com/williamgilpin/fnn
+```bash
+git clone https://github.com/williamgilpin/fnn
+```
 
 Test that everything is working:
 
-	python tests/test_models.py 
-
+```bash
+python tests/test_models.py 
+```
 
 # Tutorials
 
 Models follow the `scikit-learn` API
 
-	from fnn.models import MLPEmbedding
+```python
+from fnn.models import MLPEmbedding
 
-	model = MLPEmbedding(3, time_window=10)
-	time_series = np.loadtxt("datasets/lorenz.csv.gz", delimiter=",") # load 1D time series
+model = MLPEmbedding(3, time_window=10)
+time_series = np.loadtxt("datasets/lorenz.csv.gz", delimiter=",") # load 1D time series
 
-	embedding = model.fit_transform(time_series) # make 3D embedding
+embedding = model.fit_transform(time_series) # make 3D embedding
+```
 
 More detailed examples may be found in the various tutorial notebooks in the `demos` directory
 
