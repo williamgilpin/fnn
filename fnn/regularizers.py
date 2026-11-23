@@ -1,165 +1,185 @@
-import warnings
-import tensorflow as tf
+"""PyTorch activity regularizers for false-nearest-neighbor time-series embeddings."""
 
-class FNN(tf.keras.regularizers.Regularizer):
-    """An activity regularizer that penalizes false-nearest-neighbors
-    
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+
+
+class FNN(nn.Module):
+    """Activity regularizer that penalizes false nearest neighbors in latent space.
+
     Parameters
     ----------
-    strength : float
-        The relative strength of the regularizer
-    k : int
-        The number of neighbors to use for distance calculation. 
-        Traditionally set equal to one
+    strength : float, default=1.0
+        Relative weight of the regularizer.
+    k : int, default=1
+        Number of nearest neighbors used to evaluate neighborhood unfolding.
+    rtol : float, default=20.0
+        Relative distance threshold (Kennel et al., 1992, Eq. 4).
+    atol : float, default=2.0
+        Absolute attractor-radius threshold (Kennel et al., 1992, Eq. 5).
     """
 
-    def __init__(self, strength, k=1):
+    def __init__(
+        self,
+        strength: float = 1.0,
+        k: int = 1,
+        rtol: float = 20.0,
+        atol: float = 2.0,
+    ) -> None:
+        super().__init__()
         self.strength = strength
         self.k = k
+        self.rtol = rtol
+        self.atol = atol
 
-    def __call__(self, x):
-        return self.strength * loss_false(x, k=self.k)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.strength * loss_false(x, k=self.k, rtol=self.rtol, atol=self.atol)
 
-class DeCov(tf.keras.regularizers.Regularizer):
-    """An activity regularizer that enforces orthogonality
-    Cogswell et al. ICLR 2016
-    
+
+class DeCov(nn.Module):
+    """Activity regularizer that encourages orthogonal latent coordinates (Cogswell et al., ICLR 2016).
+
     Parameters
     ----------
-    strength : float
-        The relative strength of the regularizer
+    strength : float, default=1.0
+        Relative weight of the regularizer.
+    whiten : bool, default=False
+        Whether to standardize activations feature-wise before computing covariance.
     """
 
-    def __init__(self, strength):
+    def __init__(self, strength: float = 1.0, whiten: bool = False) -> None:
+        super().__init__()
+        self.strength = strength
+        self.whiten = whiten
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.strength * loss_cov(x, whiten=self.whiten)
+
+
+class L1Reg(nn.Module):
+    """L1 activity regularizer for latent representations."""
+
+    def __init__(self, strength: float = 0.01) -> None:
+        super().__init__()
         self.strength = strength
 
-    def __call__(self, x):
-        return self.strength * loss_cov(x)
-    
-# Alias of built-in for API consistency
-L1Reg = tf.keras.regularizers.L1 
-L2Reg = tf.keras.regularizers.L2
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.strength * x.abs().mean()
 
 
-###------------------------------------###
-#
-#
-#       Internal and Utility Functions
-#
-#
-###------------------------------------###
+class L2Reg(nn.Module):
+    """L2 activity regularizer for latent representations."""
 
-# @tf.function
-# @tf.autograph.experimental.do_not_convert
-def loss_false(code_batch, k=1):
-    """
-    An activity regularizer based on the False-Nearest-Neighbor
-    Algorithm of Kennel, Brown,and Arbanel. Phys Rev A. 1992
-    
+    def __init__(self, strength: float = 0.01) -> None:
+        super().__init__()
+        self.strength = strength
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.strength * x.pow(2).mean()
+
+
+def loss_false(
+    code_batch: torch.Tensor,
+    k: int = 1,
+    rtol: float = 20.0,
+    atol: float = 2.0,
+) -> torch.Tensor:
+    """False-nearest-neighbor activity regularizer (Kennel, Brown, and Abarbanel, Phys. Rev. A 1992).
+
     Parameters
     ----------
-    code_batch: tensor
-        (Batch size, Embedding Dimension) tensor of encoded inputs
-    k: int 
-        The number of nearest neighbors used to compute 
-        neighborhoods.
+    code_batch : torch.Tensor
+        Encoded latent activations with shape ``(batch_size, n_latent)``.
+    k : int, default=1
+        Number of nearest neighbors used to compute neighborhoods.
+    rtol : float, default=20.0
+        Relative distance tolerance (Kennel et al., Eq. 4).
+    atol : float, default=2.0
+        Absolute attractor-radius tolerance (Kennel et al., Eq. 5).
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar false-nearest-neighbor regularization penalty.
     """
-
-    _, n_latent = code_batch.get_shape()
-
-    # changing these parameters is equivalent to changing the strength of the
-    # regularizer, so we keep these fixed (these values correspond to the
-    # original values used in Kennel et al 1992).
-    rtol = 20.0
-    atol = 2.0
-    #     k_frac = 0.01
-    #     n_batch = tf.cast(tf.keras.backend.shape(code_batch)[0], tf.float32)
-    #     assert False, n_batch
-    #     k = max(1, int(k_frac * n_batch))
-
-    ## Vectorized version of distance matrix calculation
-    tri_mask = tf.linalg.band_part(tf.ones((n_latent, n_latent), tf.float32), -1, 0)
-    batch_masked = tf.multiply(tri_mask[:, tf.newaxis, :], code_batch[tf.newaxis, ...])
-    X_sq = tf.reduce_sum(batch_masked * batch_masked, axis=2, keepdims=True)
-    pdist_vector = (
-        X_sq
-        + tf.transpose(X_sq, [0, 2, 1])
-        - 2 * tf.matmul(batch_masked, tf.transpose(batch_masked, [0, 2, 1]))
-    )
-    all_dists = pdist_vector
-    all_ra = tf.sqrt(
-        (1 / (tf.range(1, 1 + n_latent, dtype=tf.float32)))
-        * tf.squeeze(
-            tf.reduce_sum(
-                tf.square(tf.math.reduce_std(batch_masked, axis=1, keepdims=True)),
-                axis=2,
-            )
+    if code_batch.ndim != 2:
+        raise ValueError(
+            f"Expected 2D tensor of shape (batch_size, n_latent), got shape {tuple(code_batch.shape)}"
         )
-    )
 
-    # Avoid singularity in the case of zeros
-    all_dists = tf.clip_by_value(all_dists, 1e-14, tf.reduce_max(all_dists))
+    n_batch, n_latent = code_batch.shape
+    if n_batch < 2 or n_latent < 2:
+        return code_batch.new_zeros(())
 
-    # inds = tf.argsort(all_dists, axis=-1)
-    _, inds = tf.math.top_k(-all_dists, int(k + 1))
-    # top_k currently faster than argsort because it truncates matrix
+    n_neighbors = min(max(1, int(k)), n_batch - 1)
+    compute_dtype = torch.float64 if code_batch.dtype == torch.float64 else torch.float32
 
-    neighbor_dists_d = tf.gather(all_dists, inds, batch_dims=-1)
-    neighbor_new_dists = tf.gather(all_dists[1:], inds[:-1], batch_dims=-1)
+    # Neighbor indicator weights are piecewise constant (zero gradient), so
+    # compute them outside the autograd graph.
+    with torch.no_grad():
+        z = code_batch.detach().to(compute_dtype)
 
-    # Eq. 4 of Kennel et al.
-    scaled_dist = tf.sqrt(
-        (neighbor_new_dists - neighbor_dists_d[:-1]) / neighbor_dists_d[:-1]
-    )
+        # Cumulative squared pairwise distances across dimensions 1..n_latent
+        diff_sq = (z[:, None, :] - z[None, :, :]).pow(2)  # (B, B, L)
+        all_dists = torch.cumsum(diff_sq, dim=-1).permute(2, 0, 1)  # (L, B, B)
+        all_dists = all_dists.clamp(min=1e-14)
 
-    # Kennel condition #1
-    is_false_change = scaled_dist > rtol
-    # Kennel condition 2
-    is_large_jump = neighbor_new_dists > atol * all_ra[:-1, tf.newaxis, tf.newaxis]
+        # Attractor scale R_A across dimensions 1..n_latent
+        dims = torch.arange(1, n_latent + 1, dtype=compute_dtype, device=z.device)
+        all_ra = torch.sqrt(torch.cumsum(z.var(dim=0, unbiased=False), dim=0) / dims)
 
-    is_false_neighbor = tf.math.logical_or(is_false_change, is_large_jump)
-    total_false_neighbors = tf.cast(is_false_neighbor, tf.int32)[..., 1 : (k + 1)]
+        # Nearest neighbors (k + 1 including self at index 0)
+        _, inds = torch.topk(all_dists, n_neighbors + 1, dim=-1, largest=False)
 
-    # Pad zero to match dimensionality of latent space
-    reg_weights = 1 - tf.reduce_mean(
-        tf.cast(total_false_neighbors, tf.float64), axis=(1, 2)
-    )
-    reg_weights = tf.pad(reg_weights, [[1, 0]])
+        neighbor_dists_d = torch.gather(all_dists, dim=-1, index=inds)
+        neighbor_new_dists = torch.gather(all_dists[1:], dim=-1, index=inds[:-1])
 
-    # Find average batch activity
-    activations_batch_averaged = tf.sqrt(tf.reduce_mean(tf.square(code_batch), axis=0))
+        # Kennel et al. Eq. 4 (all_dists holds squared distances)
+        scaled_dist = torch.sqrt(
+            (neighbor_new_dists - neighbor_dists_d[:-1]).clamp(min=0.0)
+            / neighbor_dists_d[:-1]
+        )
 
-    # L2 Activity regularization
-    activations_batch_averaged = tf.cast(activations_batch_averaged, tf.float64)
-    loss = tf.reduce_sum(tf.multiply(reg_weights, activations_batch_averaged))
+        # Kennel conditions #1 and #2
+        is_false_change = scaled_dist > rtol
+        is_large_jump = neighbor_new_dists > atol * all_ra[:-1, None, None]
+        is_false_neighbor = is_false_change | is_large_jump
 
-    return tf.cast(loss, tf.float32)
+        # Exclude self-neighbor at index 0
+        false_fraction = (
+            is_false_neighbor[..., 1 : n_neighbors + 1]
+            .to(compute_dtype)
+            .mean(dim=(1, 2))
+        )
+
+        # Leading zero ensures the first latent dimension is never shrunk to zero
+        reg_weights = torch.cat([z.new_zeros(1), 1.0 - false_fraction])
+
+    # Batch-averaged RMS activity per latent unit (eps avoids NaN grad at zero)
+    activations_rms = torch.sqrt(code_batch.to(compute_dtype).pow(2).mean(dim=0) + 1e-24)
+    loss = torch.sum(reg_weights * activations_rms)
+    return loss.to(code_batch.dtype)
 
 
-#@tf.function
-def loss_cov(a, whiten=False):
-    """
-    The covariance loss, used to orthogonalize activations. Flattens the batch
-    in order to compute elements of covariance matrix
-    
+def loss_cov(a: torch.Tensor, whiten: bool = False, eps: float = 1e-8) -> torch.Tensor:
+    """Covariance loss used to orthogonalize latent activations (Cogswell et al., ICLR 2016).
+
     Parameters
-    - a : B x N 
-        Layer activations across a batch of size B
-    - whiten : bool
-        Whether to standardize the batch feature-wise
-        
-    Reference: Cogswell et al. ICLR 2016
+    ----------
+    a : torch.Tensor
+        Layer activations with shape ``(batch_size, n_features)``.
+    whiten : bool, default=False
+        Whether to standardize activations feature-wise before computing covariance.
+    eps : float, default=1e-8
+        Lower bound on feature standard deviation when ``whiten=True``.
     """
-    a_mean = tf.reduce_mean(a, axis=0)
-    n_batch = tf.cast(tf.shape(a)[0], tf.float32)
-
-    aw = (a - a_mean)
+    aw = a - a.mean(dim=0, keepdim=True)
     if whiten:
-        a_std = tf.math.reduce_std(a, axis=0)
-        aw /= a_std
+        a_std = a.std(dim=0, unbiased=False, keepdim=True).clamp(min=eps)
+        aw = aw / a_std
 
-    cov = (1/n_batch)*tf.matmul(tf.transpose(aw), aw)
-
-    loss = 0.5*(tf.square(tf.norm(cov)) - tf.square(tf.norm(tf.linalg.diag_part(cov))))
-    
-    return loss
+    cov = (aw.T @ aw) / a.shape[0]
+    diag = torch.diagonal(cov)
+    return 0.5 * (cov.pow(2).sum() - diag.pow(2).sum())

@@ -13,21 +13,17 @@
 # Imports
 # -----------------------------------------------------------------------------
 
-from __future__ import print_function, division, absolute_import
+import warnings
 import numpy as np
 import scipy.linalg
-import warnings
-# from ..base import BaseEstimator
-# from ..utils import check_iter_of_sequences, array2d
+from sklearn.base import BaseEstimator as SklearnBaseEstimator
 from sklearn.base import TransformerMixin
 
-__all__ = ['tICA']
+__all__ = ["tICA"]
 
 # -----------------------------------------------------------------------------
 # Code
 # -----------------------------------------------------------------------------
-
-from sklearn.base import BaseEstimator as SklearnBaseEstimator
 
 
 class BaseEstimator(SklearnBaseEstimator):
@@ -35,46 +31,26 @@ class BaseEstimator(SklearnBaseEstimator):
 
     def summarize(self):
         """Return some diagnostic summary statistics about this Markov model"""
-        return 'NotImplemented'
+        return "NotImplemented"
 
-def check_iter_of_sequences(sequences, allow_trajectory=False, ndim=2,
-                            max_iter=None):
-    """Check that ``sequences`` is a iterable of trajectory-like sequences,
-    suitable as input to ``fit()`` for estimators following the MSMBuilder
-    API.
-    Parameters
-    ----------
-    sequences : object
-        The object to check
-    allow_trajectory : bool
-        Are ``md.Trajectory``s allowed?
-    ndim : int
-        The expected dimensionality of the sequences
-    max_iter : int, optional
-        Only check at maximum the first ``max_iter`` entries in ``sequences``.
-    """
-    value = True
+
+def check_iter_of_sequences(sequences, ndim=2, max_iter=None):
+    """Check that ``sequences`` is an iterable of trajectory-like arrays."""
     for i, X in enumerate(sequences):
-        if not isinstance(X, np.ndarray):
-            if (not allow_trajectory) and isinstance(X, md.Trajectory):
-                value = False
-                break
-        if not isinstance(X, md.Trajectory) and X.ndim != ndim:
-            value = False
-            break
+        if not isinstance(X, np.ndarray) or X.ndim != ndim:
+            raise ValueError("sequences must be a list of sequences")
         if max_iter is not None and i >= max_iter:
             break
 
-    if not value:
-        raise ValueError('sequences must be a list of sequences')
 
 def _assert_all_finite(X):
     """Like assert_all_finite, but only for ndarray."""
     X = np.asanyarray(X)
-    if (X.dtype.char in np.typecodes['AllFloat'] and not np.isfinite(X.sum())
-            and not np.isfinite(X).all()):
-        raise ValueError("Input contains NaN, infinity"
-                         " or a value too large for %r." % X.dtype)
+    if np.issubdtype(X.dtype, np.floating) and not np.isfinite(X).all():
+        raise ValueError(
+            "Input contains NaN, infinity or a value too large for %r." % X.dtype
+        )
+
 
 def array2d(X, dtype=None, order=None, copy=False, force_all_finite=True):
     """Returns at least 2-d array with data from X"""
@@ -82,11 +58,11 @@ def array2d(X, dtype=None, order=None, copy=False, force_all_finite=True):
     if force_all_finite:
         _assert_all_finite(X_2d)
     if X is X_2d and copy:
-        X_2d = _safe_copy(X_2d)
+        X_2d = X_2d.copy()
     return X_2d
 
 class tICA(BaseEstimator, TransformerMixin):
-    """Time-structure Independent Component Analysis (tICA)
+    r"""Time-structure Independent Component Analysis (tICA)
 
     Linear dimensionality reduction using an eigendecomposition of the
     time-lag correlation matrix and covariance matrix of the data and keeping
@@ -247,8 +223,11 @@ class tICA(BaseEstimator, TransformerMixin):
         if not np.allclose(rhs, rhs.T):
             raise RuntimeError('correlation matrix is not symmetric')
 
-        vals, vecs = scipy.linalg.eigh(lhs, b=rhs,
-            eigvals=(self.n_features-self.n_components, self.n_features-1))
+        vals, vecs = scipy.linalg.eigh(
+            lhs,
+            b=rhs,
+            subset_by_index=(self.n_features - self.n_components, self.n_features - 1),
+        )
 
         # sort in order of decreasing value
         ind = np.argsort(vals)[::-1]

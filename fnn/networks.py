@@ -1,593 +1,474 @@
-"""
-TensorFlow functions to support the false nearest neighbor regularizer
-"""
-import tensorflow as tf
-import numpy as np
-import warnings
-from utils import standardize_ts, hankel_matrix, resample_dataset
+"""PyTorch autoencoder architectures for time-series embedding."""
+
+from __future__ import annotations
+
 import math
+from collections.abc import Callable, Sequence
+from typing import Any
 
-from layers import *
+import numpy as np
+import torch
+import torch.nn as nn
 
-# # tf.__version__ must be greater than 2
-# # print(len(tf.config.list_physical_devices('GPU')), "GPUs available.")
-# # Suppress some warnings that appeared in tf 2.2
-# tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+from .layers import CausalConv1D, GaussianNoise, SequenceBatchNorm1d, make_activation
 
-# use_legacy = False ## for development 
-# if use_legacy:
-#     warnings.warn("Legacy mode is enabled, archival versions of functions will be used")
 
-class CausalAE(tf.keras.Model):
-    """
-    A causal autoencoder model for time series
-    """
+class _PredictMixin:
+    """Convenience inference helper accepting NumPy arrays or PyTorch tensors."""
+
+    @torch.inference_mode()
+    def predict(
+        self,
+        x: np.ndarray | torch.Tensor,
+        batch_size: int | None = None,
+    ) -> np.ndarray:
+        was_training = self.training
+        self.eval()
+        try:
+            param = next(self.parameters(), None)
+            device = param.device if param is not None else torch.device("cpu")
+            dtype = param.dtype if param is not None else torch.float32
+            tensor = torch.as_tensor(x, dtype=dtype)
+
+            if batch_size is None:
+                return self(tensor.to(device)).cpu().numpy()
+
+            outputs = []
+            for start in range(0, len(tensor), batch_size):
+                batch = tensor[start : start + batch_size].to(device)
+                outputs.append(self(batch).cpu().numpy())
+            return np.concatenate(outputs, axis=0)
+        finally:
+            if was_training:
+                self.train()
+
+
+class _AutoencoderBase(nn.Module):
+    """Base PyTorch autoencoder holding an encoder, decoder, and optional latent regularizer."""
+
+    encoder: nn.Module
+    decoder: nn.Module
+    latent_regularizer: Callable[[torch.Tensor], torch.Tensor] | None
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encoder(x)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.decoder(z)
+
+    def forward_with_latent(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        code = self.encoder(x)
+        recon = self.decoder(code)
+        return recon, code
+
+    def regularization_loss(self, code: torch.Tensor) -> torch.Tensor:
+        if self.latent_regularizer is None:
+            return code.new_zeros(())
+        return self.latent_regularizer(code)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decoder(self.encoder(x))
+
+
+class _MLPEncoder(_PredictMixin, nn.Module):
     def __init__(
         self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[10, 10],
-        latent_regularizer=None,
-        kernel_size=3,
-        dilation_scale=2,
-        strides=1,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        add_noise=False,
-        **kwargs
-    ):
+        time_window: int,
+        n_features: int,
+        n_latent: int,
+        network_shape: Sequence[int],
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        noise_std: float = 0.5,
+    ) -> None:
         super().__init__()
+        layers: list[nn.Module] = [nn.Flatten(), GaussianNoise(noise_std)]
+        in_dim = time_window * n_features
+        for hidden_size in network_shape:
+            layers.extend([
+                nn.Linear(in_dim, hidden_size),
+                nn.BatchNorm1d(hidden_size),
+                make_activation(activation_func),
+            ])
+            in_dim = hidden_size
+        layers.extend([
+            nn.Linear(in_dim, n_latent),
+            nn.BatchNorm1d(n_latent),
+        ])
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class _MLPDecoder(_PredictMixin, nn.Module):
+    def __init__(
+        self,
+        time_window: int,
+        n_features: int,
+        n_latent: int,
+        network_shape: Sequence[int],
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        noise_std: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.time_window = time_window
+        self.n_features = n_features
+        layers: list[nn.Module] = [nn.Flatten(), GaussianNoise(noise_std)]
+        in_dim = n_latent
+        for hidden_size in reversed(network_shape):
+            layers.extend([
+                nn.Linear(in_dim, hidden_size),
+                nn.BatchNorm1d(hidden_size),
+                make_activation(activation_func),
+            ])
+            in_dim = hidden_size
+        layers.extend([
+            nn.Linear(in_dim, time_window * n_features),
+            nn.BatchNorm1d(time_window * n_features),
+        ])
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return self.net(z).reshape(-1, self.time_window, self.n_features)
+
+
+class MLPAutoencoder(_AutoencoderBase):
+    """Fully-connected time-delay autoencoder for time series."""
+
+    def __init__(
+        self,
+        n_latent: int,
+        time_window: int,
+        n_features: int = 1,
+        network_shape: Sequence[int] = (10, 10),
+        latent_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        rnn_opts: dict[str, Any] | None = None,
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        random_state: int | None = None,
+        noise_std: float = 0.5,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        _ = rnn_opts, kwargs
         self.n_latent = n_latent
         self.time_window = time_window
         self.n_features = n_features
+        self.latent_regularizer = latent_regularizer
 
-        time_window_downsampled = math.ceil(time_window/(strides**(len(network_shape))))
-        time_window_upsampled = time_window_downsampled*(strides**(len(network_shape)))
+        if random_state is not None:
+            torch.manual_seed(random_state)
 
-        if time_window_upsampled != time_window:
-            print("non-integer stride output detected; use closest time window" + str(time_window_upsampled))
-            self.time_window = time_window_upsampled
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-#         self.encoder = CausalEncoder(n_latent, 
-#                                      kernel_size=kernel_size, 
-#                                      network_shape=network_shape,
-#                                      latent_regularizer=latent_regularizer,
-#                                      dilation_scale=dilation_scale,
-#                                      strides=strides,
-#                                      rnn_opts=rnn_opts,
-#                                      activation_func=activation_func
-#                                     )
-        
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5))
+        self.encoder = _MLPEncoder(
+            time_window,
+            n_features,
+            n_latent,
+            network_shape=network_shape,
+            activation_func=activation_func,
+            noise_std=noise_std,
+        )
+        self.decoder = _MLPDecoder(
+            time_window,
+            n_features,
+            n_latent,
+            network_shape=network_shape,
+            activation_func=activation_func,
+            noise_std=noise_std,
+        )
+
+
+class _LSTMEncoder(_PredictMixin, nn.Module):
+    def __init__(
+        self,
+        time_window: int,
+        n_features: int,
+        n_latent: int,
+        network_shape: Sequence[int] = (),
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        noise_std: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.time_window = time_window
+        self.noise = GaussianNoise(noise_std)
+        self.hidden_lstms = nn.ModuleList()
+        self.hidden_bns = nn.ModuleList()
+        self.hidden_acts = nn.ModuleList()
+
+        in_dim = n_features
+        for hidden_size in network_shape:
+            self.hidden_lstms.append(nn.LSTM(in_dim, hidden_size, batch_first=True))
+            self.hidden_bns.append(SequenceBatchNorm1d(hidden_size))
+            self.hidden_acts.append(make_activation(activation_func))
+            in_dim = hidden_size
+
+        self.final_lstm = nn.LSTM(in_dim, n_latent, batch_first=True)
+        self.final_bn = nn.BatchNorm1d(n_latent)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.noise(x)
+        for lstm, bn, act in zip(self.hidden_lstms, self.hidden_bns, self.hidden_acts):
+            h, _ = lstm(h)
+            h = act(bn(h))
+        _, (h_n, _) = self.final_lstm(h)
+        return self.final_bn(h_n[-1])
+
+
+class _LSTMDecoder(_PredictMixin, nn.Module):
+    def __init__(
+        self,
+        time_window: int,
+        n_features: int,
+        n_latent: int,
+        network_shape: Sequence[int] = (),
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        noise_std: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.time_window = time_window
+        self.noise = GaussianNoise(noise_std)
+        self.initial_lstm = nn.LSTM(n_latent, n_latent, batch_first=True)
+        self.hidden_lstms = nn.ModuleList()
+        in_dim = n_latent
+        for hidden_size in reversed(network_shape):
+            self.hidden_lstms.append(nn.LSTM(in_dim, hidden_size, batch_first=True))
+            in_dim = hidden_size
+
+        self.bn = SequenceBatchNorm1d(in_dim)
+        self.activation = make_activation(activation_func)
+        self.out_proj = nn.Linear(in_dim, n_features)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        seq = self.noise(z).unsqueeze(1).expand(-1, self.time_window, -1)
+        h, _ = self.initial_lstm(seq)
+        for lstm in self.hidden_lstms:
+            h, _ = lstm(h)
+        h = self.activation(self.bn(h))
+        return self.out_proj(h)
+
+
+class LSTMAutoencoder(_AutoencoderBase):
+    """LSTM autoencoder for time series."""
+
+    def __init__(
+        self,
+        n_latent: int,
+        time_window: int,
+        n_features: int = 1,
+        network_shape: Sequence[int] = (),
+        latent_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        rnn_opts: dict[str, Any] | None = None,
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        random_state: int | None = None,
+        noise_std: float = 0.5,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        _ = rnn_opts, kwargs
+        self.n_latent = n_latent
+        self.time_window = time_window
+        self.n_features = n_features
+        self.latent_regularizer = latent_regularizer
+
+        if random_state is not None:
+            torch.manual_seed(random_state)
+
+        self.encoder = _LSTMEncoder(
+            time_window,
+            n_features,
+            n_latent,
+            network_shape=network_shape,
+            activation_func=activation_func,
+            noise_std=noise_std,
+        )
+        self.decoder = _LSTMDecoder(
+            time_window,
+            n_features,
+            n_latent,
+            network_shape=network_shape,
+            activation_func=activation_func,
+            noise_std=noise_std,
+        )
+
+
+class _CausalAEEncoder(_PredictMixin, nn.Module):
+    def __init__(
+        self,
+        n_features: int,
+        n_latent: int,
+        network_shape: Sequence[int],
+        kernel_size: int,
+        dilation_scale: int,
+        strides: int,
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        noise_std: float = 0.5,
+    ) -> None:
+        super().__init__()
+        layers: list[nn.Module] = [GaussianNoise(noise_std)]
+        in_ch = n_features
         for i, hidden_size in enumerate(network_shape):
-            self.encoder.add(
+            layers.extend([
                 CausalConv1D(
-                    hidden_size, 
-                    kernel_size,
-                    strides=strides, 
-                    padding="causal",
+                    in_ch,
+                    hidden_size,
+                    kernel_size=kernel_size,
+                    strides=strides,
                     dilation_rate=dilation_scale**i,
-                    activation=None, 
-                    name="conv" + str(i),
-                    **rnn_opts
-                )
-            )
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-        
-        
-#         self.encoder.add(tf.keras.layers.Flatten())
-#         self.encoder.add(
-#             tf.keras.layers.Dense(
-#                 n_latent,
-#                 activation=None,
-#                 activity_regularizer=latent_regularizer
-#                 )
-#             )
-        
-        self.encoder.add(
-            tf.keras.layers.LSTM(
-                n_latent,
-                activation=None,
-                return_sequences=False,
-                activity_regularizer=latent_regularizer
-                )
-            )
-        
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5))
-        
-#         self.decoder.add(tf.keras.layers.Dense(units=time_window_downsampled*network_shape[-1], activation=None))
-#         self.decoder.add(tf.keras.layers.Activation(activation_func))
-#         self.decoder.add(tf.keras.layers.Reshape(target_shape=(time_window_downsampled, network_shape[-1])))
-        
-        
-        self.decoder.add(tf.keras.layers.RepeatVector(time_window_downsampled))
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                network_shape[-1],
-                activation=None,
-                return_sequences=True
-                )
-            )
-        self.decoder.add(tf.keras.layers.Activation(activation_func))
+                ),
+                SequenceBatchNorm1d(hidden_size),
+                make_activation(activation_func),
+            ])
+            in_ch = hidden_size
+        self.conv_net = nn.Sequential(*layers)
+        self.lstm = nn.LSTM(in_ch, n_latent, batch_first=True)
 
-        for i, hidden_unit in enumerate(network_shape[::-1][1:] + [n_features]):
-            upsamp_factor = dilation_scale**(len(network_shape) - i - 1)
-            #print(upsamp_factor)
-            self.decoder.add(
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.conv_net(x)
+        _, (h_n, _) = self.lstm(h)
+        return h_n[-1]
+
+
+class _CausalAEDecoder(_PredictMixin, nn.Module):
+    def __init__(
+        self,
+        n_latent: int,
+        n_features: int,
+        time_window_downsampled: int,
+        network_shape: Sequence[int],
+        kernel_size: int,
+        dilation_scale: int,
+        strides: int,
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        noise_std: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.time_window_downsampled = time_window_downsampled
+        self.noise = GaussianNoise(noise_std)
+        self.lstm = nn.LSTM(n_latent, network_shape[-1], batch_first=True)
+        self.lstm_act = make_activation(activation_func)
+
+        deconv_layers: list[nn.Module] = []
+        in_ch = network_shape[-1]
+        out_channels_list = list(reversed(network_shape))[1:] + [n_features]
+        for i, hidden_unit in enumerate(out_channels_list):
+            upsamp_factor = dilation_scale ** (len(network_shape) - i - 1)
+            deconv_layers.append(
                 CausalConv1D(
-                    hidden_unit, 
-                    kernel_size, # kernel size
-                    strides=strides, 
-                    padding='same', #same?
+                    in_ch,
+                    hidden_unit,
+                    kernel_size=kernel_size,
+                    strides=strides,
                     dilation_rate=upsamp_factor,
                     transpose=True,
-                    activation=None,
-                    name="deconv" + str(i),
-                    **rnn_opts
                 )
             )
-            self.decoder.add(tf.keras.layers.BatchNormalization())
-            # no activation on final layer
-            if i < len(network_shape):
-                self.decoder.add(tf.keras.layers.Activation(activation_func))
-#         skip_down = tf.keras.layers.Conv1DTranspose(
-#             network_shape[-1], 
-#             kernel_size,
-#             strides=strides**len(network_shape),
-#             padding="SAME"
-#             activation=None, 
-#             name="skip_up",
-#             **rnn_opts
-#         )
-    
-        
-    def call(self, inputs, training=False): 
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
+            deconv_layers.append(SequenceBatchNorm1d(hidden_unit))
+            if i < len(out_channels_list) - 1:
+                deconv_layers.append(make_activation(activation_func))
+            in_ch = hidden_unit
+        self.deconv_net = nn.Sequential(*deconv_layers)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        seq = self.noise(z).unsqueeze(1).expand(-1, self.time_window_downsampled, -1)
+        h, _ = self.lstm(seq)
+        h = self.lstm_act(h)
+        return self.deconv_net(h)
 
 
-# class CausalAutoencoder(tf.keras.Model):
-    
-#     def __init__(
-#             self,
-#             n_latent,
-#             time_window,
-#             n_features=1,
-#             network_shape=[10, 10],
-#             latent_regularizer=None,
-#             kernel_size=3,
-#             dilation_rate=2,
-#             activation_func=tf.nn.elu,
-#             random_state=None,
-#             **kwargs
-#         ):
-#             super().__init__()
-#             self.n_latent = n_latent
-#             #self.time_window = time_window
-#             self.n_features = n_features
+class CausalAE(_AutoencoderBase):
+    """Dilated causal convolutional + LSTM autoencoder for time series."""
 
-#             # Initialize state
-#             tf.random.set_seed(random_state)
-
-#             self.encoder = tf.keras.Sequential(
-#                 [
-#                 CausalCNN(n_latent, 
-#                     network_shape, 
-#                     kernel_size = kernel_size)
-#                 ,tf.keras.layers.Layer(activity_regularizer=latent_regularizer)
-#                 ])
-#             self.decoder = tf.keras.Sequential([CausalCNN(n_features, 
-#                                      network_shape, 
-#                                      kernel_size = kernel_size)])
-            
-#     def call(self, inputs, training=False):
-#         outputs = self.decoder(self.encoder(inputs))
-#         return outputs
-
-
-# class CausalAutoencoder(tf.keras.Model):
-#     """
-#     Consider taking the time window as an explicit argument, in order to avoid
-#     the upsampling ambiguity
-#     """
-    
-#     def __init__(
-#             self,
-#             n_latent,
-#             #time_window, 
-#             depth=3,
-#             units_per_layer=10,
-#             n_features=1,
-#             network_shape=[10, 10],
-#             latent_regularizer=None,
-#             kernel_size=3,
-#             dilation_rate=2,
-#             strides=1,
-#             activation_func=tf.nn.elu,
-#             random_state=None,
-#             conv_output_shape=None,
-#             **kwargs
-#         ):
-#             super().__init__()
-#             self.n_latent = n_latent
-#             self.time_window = time_window
-#             self.n_features = n_features
-#             self.network_shape = network_shape
-#             self.strides = strides
-
-
-#             #self.depth = len(network_shape)
-
-#             # Initialize state
-#             tf.random.set_seed(random_state)
-
-#             #self.even_shape = self.strides**(2*len(network_shape))
-#             # factor of 2 comes from the two blocks
-
-#             if not conv_output_shape:
-#                 conv_output_shape = n_latent
-
-#             self.encoder = tf.keras.Sequential([
-#                 CausalCNN(n_latent, 
-#                     network_shape, 
-#                     kernel_size = kernel_size,
-#                     strides=strides,
-#                     ),
-#                 tf.keras.layers.Reshape([-1]),
-#                 tf.keras.layers.Dense(
-#                     n_latent, 
-#                     activation=None,
-#                     activity_regularizer=latent_regularizer
-#                     )
-#                 ])
-
-#             self.decoder = tf.keras.Sequential([
-#                 tf.keras.layers.Dense(
-#                     conv_output_shape*n_latent, 
-#                     activation=None
-#                     ),
-#                 tf.keras.layers.Reshape([-1, n_latent]),
-#                 CausalCNN(n_features, 
-#                     network_shape, 
-#                     kernel_size = kernel_size,
-#                     strides=strides,
-#                     transpose=True
-#                     )
-#                 ])
-            
-#     def call(self, inputs, training=False):
-#         # outputs = self.decoder(
-#         #     self.encoder(
-#         #         tf.pad(inputs, [[0,0], [self.safe_pad, 0], [0, 0]])
-#         #         )
-#         #     )
-#         # return outputs[:, self.safe_pad:, :]
-#         outputs = self.decoder(self.encoder(inputs))
-#         return outputs
-        
-
-
-
-
-
-
-class MLPAutoencoder(tf.keras.Model):
-    """
-    A fully-connected autoencoder model for time series
-    """
     def __init__(
         self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[10, 10],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
-        super(MLPAutoencoder, self).__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.Flatten())
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(time_window,))) # smooths the output
-        for hidden_size in network_shape:
-            self.encoder.add(tf.keras.layers.Dense(hidden_size, **rnn_opts))
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-        self.encoder.add(tf.keras.layers.Dense(n_latent, input_shape=(time_window,), **rnn_opts))
-        self.encoder.add(tf.keras.layers.BatchNormalization())
-        self.encoder.add(
-            tf.keras.layers.Reshape(
-                (n_latent,),  
-                activity_regularizer=latent_regularizer
-            )
-        )
-
-        ## Decoder
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.Flatten())
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
-        for hidden_size in network_shape[::-1]:
-            self.decoder.add(tf.keras.layers.Dense(hidden_size,  **rnn_opts))
-            self.decoder.add(tf.keras.layers.BatchNormalization())
-            self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.Dense(time_window*n_features, **rnn_opts))
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        #self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.Reshape((time_window, n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-
-class MLPAutoencoderLegacy(tf.keras.Model):
-    """
-    A fully-connected autoencoder model for time series
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[10, 10],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-    ):
+        n_latent: int,
+        time_window: int,
+        n_features: int = 1,
+        network_shape: Sequence[int] = (10, 10),
+        latent_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        kernel_size: int = 3,
+        dilation_scale: int = 2,
+        strides: int = 1,
+        rnn_opts: dict[str, Any] | None = None,
+        activation_func: nn.Module | Callable[[], nn.Module] | None = None,
+        random_state: int | None = None,
+        noise_std: float = 0.5,
+        **kwargs: Any,
+    ) -> None:
         super().__init__()
+        _ = rnn_opts, kwargs
         self.n_latent = n_latent
-        self.time_window = time_window
         self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.Flatten())
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(time_window,))) # smooths the output
-        
-        for  hidden_size in network_shape:
-            self.encoder.add(tf.keras.layers.Dense(hidden_size, **rnn_opts))
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-    
-        self.encoder.add(tf.keras.layers.Dense(self.n_latent, input_shape=(self.time_window,), **rnn_opts))
-        self.encoder.add(tf.keras.layers.BatchNormalization())
-        #enc.add(tf.keras.layers.Activation(activation_func))
+        self.latent_regularizer = latent_regularizer
 
-        self.encoder.add(tf.keras.layers.Reshape((self.n_latent,), 
-                                                 activity_regularizer=latent_regularizer))
+        time_window_downsampled = math.ceil(time_window / (strides ** len(network_shape)))
+        self.time_window = time_window_downsampled * (strides ** len(network_shape))
 
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.Flatten())
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
+        if random_state is not None:
+            torch.manual_seed(random_state)
 
-        for hidden_size in network_shape[::-1]:
-            self.decoder.add(tf.keras.layers.Dense(hidden_size,  **rnn_opts))
-            self.decoder.add(tf.keras.layers.BatchNormalization())
-            self.decoder.add(tf.keras.layers.Activation(activation_func))
-
-
-        self.decoder.add(tf.keras.layers.Dense(self.time_window*self.n_features, **rnn_opts))
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        self.decoder.add(tf.keras.layers.Activation(activation_func))
-
-        self.decoder.add(tf.keras.layers.Reshape((self.time_window, self.n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-    
-    
-class LSTMAutoencoder(tf.keras.Model):
-    """
-    An LSTM autoencoder model for time series
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
-        super(LSTMAutoencoder, self).__init__()
-        self.n_latent = n_latent
-        self.time_window = time_window
-        self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5)) # smooths the output
-        
-        for i, hidden_size in enumerate(network_shape):
-            self.encoder.add(
-                tf.keras.layers.LSTM(
-                    hidden_size,
-                    #input_shape=(time_window, n_features),
-                    return_sequences=True,
-                    name="lstm_encoder_"+str(i),
-                    **rnn_opts
-                )
-            )
-            self.encoder.add(tf.keras.layers.BatchNormalization())
-            self.encoder.add(tf.keras.layers.Activation(activation_func))
-        self.encoder.add(
-            tf.keras.layers.LSTM(
-                n_latent,
-                #input_shape=(time_window, n_features),
-                return_sequences=False,
-                name="lstm_encoder_final",
-                **rnn_opts
-            )
+        self.encoder = _CausalAEEncoder(
+            n_features,
+            n_latent,
+            network_shape=network_shape,
+            kernel_size=kernel_size,
+            dilation_scale=dilation_scale,
+            strides=strides,
+            activation_func=activation_func,
+            noise_std=noise_std,
         )
-        self.encoder.add(tf.keras.layers.BatchNormalization(activity_regularizer=latent_regularizer))
-            
-        ## Decoder
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5, input_shape=(n_latent,)))
-        self.decoder.add(tf.keras.layers.RepeatVector(time_window))
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                n_latent,
-                #input_shape=(time_window, n_features),
-                return_sequences=True,
-                name="lstm_decoder_initial",
-                **rnn_opts
-            )
+        self.decoder = _CausalAEDecoder(
+            n_latent,
+            n_features,
+            time_window_downsampled=time_window_downsampled,
+            network_shape=network_shape,
+            kernel_size=kernel_size,
+            dilation_scale=dilation_scale,
+            strides=strides,
+            activation_func=activation_func,
+            noise_std=noise_std,
         )
-        
-        
-        for i, hidden_size in enumerate(network_shape[::-1]):
-            self.decoder.add(
-                tf.keras.layers.LSTM(
-                    hidden_size, 
-                    return_sequences=True, 
-                    go_backwards=True, 
-                    name="lstm_decoder_"+str(i),
-                    **rnn_opts
-                )
-            )
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                n_features, 
-                return_sequences=True, 
-                go_backwards=True, 
-                name="lstm_decoder_final"),
-                **rnn_opts
-        )
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        #self.decoder.add(tf.keras.layers.Activation(activation_func))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-    
-class LSTMAutoencoderLegacy(tf.keras.Model):
-    """
-    An LSTM autoencoder model, based on the architecture used in the original 
-    FNN preprint
-    """
-    def __init__(
-        self,
-        n_latent,
-        time_window,
-        n_features=1,
-        network_shape=[],
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        activation_func=tf.keras.layers.ELU(alpha=1.0),
-        random_state=None,
-        **kwargs
-    ):
+
+
+class _LinearEncoder(_PredictMixin, nn.Module):
+    def __init__(self, time_window: int, n_features: int, n_latent: int) -> None:
         super().__init__()
-        self.n_latent = n_latent
+        self.net = nn.Sequential(nn.Flatten(), nn.Linear(time_window * n_features, n_latent))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class _LinearDecoder(_PredictMixin, nn.Module):
+    def __init__(self, time_window: int, n_features: int, n_latent: int) -> None:
+        super().__init__()
         self.time_window = time_window
         self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.GaussianNoise(0.5))  # smooths the output
-        self.encoder.add(
-            tf.keras.layers.LSTM(
-                self.n_latent,
-                input_shape=(self.time_window, self.n_features),
-                return_sequences=False,
-                **rnn_opts
-            )
-        )
-        self.encoder.add(tf.keras.layers.BatchNormalization(activity_regularizer=latent_regularizer))
-        
-        
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.RepeatVector(self.time_window))
-        self.decoder.add(tf.keras.layers.GaussianNoise(0.5))
-        self.decoder.add(
-            tf.keras.layers.LSTM(
-                self.n_latent, return_sequences=True, go_backwards=True, **rnn_opts
-            )
-        )
-        self.decoder.add(tf.keras.layers.BatchNormalization())
-        self.decoder.add(tf.keras.layers.Activation(activation_func))
-        self.decoder.add(tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
-    
-    
-class ETDConstrained(tf.keras.Model):
-    """
-    A batchwise fully-connected eigen-time-delay embedding (linear autoencoder)
-    """
+        self.net = nn.Sequential(nn.Flatten(), nn.Linear(n_latent, time_window * n_features))
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return self.net(z).reshape(-1, self.time_window, self.n_features)
+
+
+class ETDConstrained(_AutoencoderBase):
+    """Linear autoencoder implementing a regularized eigen-time-delay embedding."""
+
     def __init__(
         self,
-        n_latent,
-        time_window,
-        n_features=1,
-        latent_regularizer=None,
-        rnn_opts=dict(),
-        random_state=None,
-        **kwargs
-    ):
-        super(ETDConstrained, self).__init__()
+        n_latent: int,
+        time_window: int,
+        n_features: int = 1,
+        latent_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        rnn_opts: dict[str, Any] | None = None,
+        random_state: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        _ = rnn_opts, kwargs
         self.n_latent = n_latent
         self.time_window = time_window
         self.n_features = n_features
-        
-        # Initialize state
-        tf.random.set_seed(random_state)
-        
-        # Encoder
-        self.encoder = tf.keras.Sequential()
-        self.encoder.add(tf.keras.layers.InputLayer(input_shape=(time_window, n_features)))
-        self.encoder.add(tf.keras.layers.Flatten())
-        self.encoder.add(tf.keras.layers.Dense(n_latent, activation=None, **rnn_opts))
-        self.encoder.add(
-            tf.keras.layers.Reshape(
-                (n_latent,),  
-                activity_regularizer=latent_regularizer
-            )
-        )
+        self.latent_regularizer = latent_regularizer
 
-        self.decoder = tf.keras.Sequential()
-        self.decoder.add(tf.keras.layers.Flatten())
-        self.decoder.add(tf.keras.layers.Dense(time_window*n_features, activation=None, **rnn_opts))
-        self.decoder.add(tf.keras.layers.Reshape((time_window, n_features)))
-        
-    def call(self, inputs, training=False):
-        outputs = self.decoder(self.encoder(inputs))
-        return outputs
+        if random_state is not None:
+            torch.manual_seed(random_state)
+
+        self.encoder = _LinearEncoder(time_window, n_features, n_latent)
+        self.decoder = _LinearDecoder(time_window, n_features, n_latent)
