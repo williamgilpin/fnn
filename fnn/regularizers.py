@@ -35,7 +35,15 @@ class FNN(nn.Module):
         self.atol = atol
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.strength == 0:
+            return x.sum() * 0.0
         return self.strength * loss_false(x, k=self.k, rtol=self.rtol, atol=self.atol)
+
+    def extra_repr(self) -> str:
+        return (
+            f"strength={self.strength}, k={self.k}, "
+            f"rtol={self.rtol}, atol={self.atol}"
+        )
 
 
 class DeCov(nn.Module):
@@ -55,7 +63,12 @@ class DeCov(nn.Module):
         self.whiten = whiten
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.strength == 0:
+            return x.sum() * 0.0
         return self.strength * loss_cov(x, whiten=self.whiten)
+
+    def extra_repr(self) -> str:
+        return f"strength={self.strength}, whiten={self.whiten}"
 
 
 class L1Reg(nn.Module):
@@ -66,7 +79,12 @@ class L1Reg(nn.Module):
         self.strength = strength
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.strength == 0:
+            return x.sum() * 0.0
         return self.strength * x.abs().mean()
+
+    def extra_repr(self) -> str:
+        return f"strength={self.strength}"
 
 
 class L2Reg(nn.Module):
@@ -77,7 +95,12 @@ class L2Reg(nn.Module):
         self.strength = strength
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.strength == 0:
+            return x.sum() * 0.0
         return self.strength * x.pow(2).mean()
+
+    def extra_repr(self) -> str:
+        return f"strength={self.strength}"
 
 
 def loss_false(

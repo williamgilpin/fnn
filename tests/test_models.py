@@ -92,6 +92,15 @@ class TestRegularizers(unittest.TestCase):
         val64.backward()
         self.assertTrue(torch.isfinite(z64.grad).all())
 
+        reg = FNN(strength=0.0)
+        self.assertIn("strength=0.0", repr(reg))
+        z0 = torch.randn((16, 4), requires_grad=True)
+        out0 = reg(z0)
+        self.assertEqual(out0.item(), 0.0)
+        out0.backward()
+        assert z0.grad is not None
+        self.assertTrue(torch.allclose(z0.grad, torch.zeros_like(z0)))
+
     def test_other_regularizers(self) -> None:
         torch.manual_seed(0)
         z = torch.randn((32, 4), requires_grad=True)
